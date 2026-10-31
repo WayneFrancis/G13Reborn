@@ -32,6 +32,8 @@ internal sealed class MacroEditorDialog : Form
     };
     private readonly Button _addStep = new() { Text = "Add step", AutoSize = true };
     private readonly Button _removeStep = new() { Text = "Remove step", AutoSize = true };
+    private readonly Button _stepUp = new() { Text = "Move up", AutoSize = true };
+    private readonly Button _stepDown = new() { Text = "Move down", AutoSize = true };
     private readonly Button _recordSteps = new()
     {
         Text = "Record / replace steps...", AutoSize = true
@@ -143,7 +145,7 @@ internal sealed class MacroEditorDialog : Form
         var stepButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };
         stepButtons.Controls.AddRange(new Control[]
         {
-            _addStep, _removeStep, _recordSteps
+            _addStep, _removeStep, _stepUp, _stepDown, _recordSteps
         });
         right.Controls.Add(stepButtons, 0, 5);
         right.Controls.Add(new Label
@@ -180,6 +182,8 @@ internal sealed class MacroEditorDialog : Form
                 _steps.Rows.Remove(_steps.CurrentRow);
         };
         _recordSteps.Click += (_, _) => RecordSteps();
+        _stepUp.Click += (_, _) => MoveStep(-1);
+        _stepDown.Click += (_, _) => MoveStep(+1);
         save.Click += (_, _) => SaveClicked();
 
         RefreshList(_macros.Count > 0 ? 0 : -1);
@@ -232,9 +236,34 @@ internal sealed class MacroEditorDialog : Form
         _textDelay.Enabled = active && isText;
         _steps.Enabled = active && !isText;
         _addStep.Enabled = _removeStep.Enabled = active && !isText;
+        _stepUp.Enabled = _stepDown.Enabled = active && !isText;
         // It is valid to start recording while editing a Text macro.
         // Accepting converts that macro to Steps, without changing its name.
         _recordSteps.Enabled = active;
+    }
+
+    private void MoveStep(int direction)
+    {
+        if (_steps.CurrentRow is null) return;
+        _steps.EndEdit();
+        int index = _steps.CurrentRow.Index;
+        int other = index + direction;
+        if (other < 0 || other >= _steps.Rows.Count) return;
+        // A separate row snapshot avoids storing a DataGridViewRow in two
+        // places and preserves the currently edited action and delay values.
+        var here = new object?[_steps.Columns.Count];
+        var there = new object?[_steps.Columns.Count];
+        for (int column = 0; column < _steps.Columns.Count; column++)
+        {
+            here[column] = _steps.Rows[index].Cells[column].Value;
+            there[column] = _steps.Rows[other].Cells[column].Value;
+        }
+        for (int column = 0; column < _steps.Columns.Count; column++)
+        {
+            _steps.Rows[index].Cells[column].Value = there[column];
+            _steps.Rows[other].Cells[column].Value = here[column];
+        }
+        _steps.CurrentCell = _steps.Rows[other].Cells[0];
     }
 
     private void RecordSteps()

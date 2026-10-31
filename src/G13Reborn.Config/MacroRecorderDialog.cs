@@ -19,10 +19,13 @@ internal sealed class MacroRecorderDialog : Form
     private const int WmSysKeyUp = 0x0105;
     private const int WmLButtonDown = 0x0201;
     private const int WmLButtonUp = 0x0202;
+    private const int WmLButtonDblClk = 0x0203;
     private const int WmRButtonDown = 0x0204;
     private const int WmRButtonUp = 0x0205;
+    private const int WmRButtonDblClk = 0x0206;
     private const int WmMButtonDown = 0x0207;
     private const int WmMButtonUp = 0x0208;
+    private const int WmMButtonDblClk = 0x0209;
     private const int WmMouseWheel = 0x020A;
     private const uint LlKeyboardInjected = 0x10;
     private const uint LlMouseInjected = 0x01;
@@ -259,16 +262,19 @@ internal sealed class MacroRecorderDialog : Form
                     switch (message)
                     {
                         case WmLButtonDown: case WmLButtonUp:
+                        case WmLButtonDblClk:
                             _session.RecordMouseButton("Left",
-                                message == WmLButtonDown, elapsed);
+                                message != WmLButtonUp, elapsed);
                             break;
                         case WmRButtonDown: case WmRButtonUp:
+                        case WmRButtonDblClk:
                             _session.RecordMouseButton("Right",
-                                message == WmRButtonDown, elapsed);
+                                message != WmRButtonUp, elapsed);
                             break;
                         case WmMButtonDown: case WmMButtonUp:
+                        case WmMButtonDblClk:
                             _session.RecordMouseButton("Middle",
-                                message == WmMButtonDown, elapsed);
+                                message != WmMButtonUp, elapsed);
                             break;
                         case WmMouseWheel:
                             int delta = (short)(data.MouseData >> 16);

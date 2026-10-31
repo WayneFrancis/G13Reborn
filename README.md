@@ -133,44 +133,14 @@ implementation does not support repeated macros while a key is held.
 
 ### Text macro reliability and pacing
 
-Text macros are now sent in **atomic Unicode event batches** (up to 128 UTF-16
-units per batch) rather than separate SendInput calls for every character.
-This prevents input from simultaneously pressed G13 keys from interleaving
-between the characters of a short text macro.
+Text is sent as paced Unicode key down/up events rather than flooding one
+large SendInput batch. The default delay is 25 ms between characters;
+configurable from 5 to 100 ms in **Edit macros...**. Older saved profiles
+containing `TextDelayMs: 0` use the safe 25 ms default automatically.
 
-**Text delay (ms/char)** in the macro editor defaults to **0** (fast batched
-input). Set it to **10–25 ms** if a specific application cannot reliably
-process fast injected Unicode input. With a nonzero text delay, insertion is
-per-character and can interleave with other normal mapped keys; do not hold
-other keys while testing pacing mode.
+While a text macro runs, ordinary mapped G-key actions are deferred and
+replayed on successful macro completion. Stop, cancellation or profile
+changes discard queued actions to avoid sending stale keystrokes into a
+different program. This cannot suppress keystrokes generated separately
+by Logitech Gaming Software.
 
-This change does not suppress Logitech Gaming Software-generated input or
-change the G13's native keyboard interface. If characters are still duplicated
-while keyboard input is idle, test with LGS disabled and no other macro software
-active. Standard Windows Unicode text injection is most useful for text
-controls (such as Notepad) and is not guaranteed to work in raw-input games.
-
-
-### Text macro reliability (revised)
-
-A prior optimization sent whole text macros in large `SendInput` arrays.
-Although Windows preserves event order, some editors (notably Windows
-Notepad) lost many characters under rapid injection. That optimization has
-been removed.
-
-**Text macros now type at a default pace of 25 ms per character**, each
-character sent as a small Unicode down/up event pair. The **Text delay
-(ms/char)** control accepts 5-100 ms. Profiles saved by the earlier version
-with delay `0` automatically use the safe 25 ms default.
-
-While a text macro is playing, ordinary mapped G-key actions are buffered
-instead of being injected between its characters. On successful completion
-they are replayed in the original order. Stop/release or profile switching
-discards those pending actions, so a cancelled macro does not send stale
-keys to a different application. The macro remains cancellable between
-characters.
-
-If a specific application still drops characters, increase the delay to
-40-60 ms. Text playback is inherently application-dependent; Windows
-`SendInput` success only indicates successful insertion into the input stream,
-not successful handling by the focused text control.

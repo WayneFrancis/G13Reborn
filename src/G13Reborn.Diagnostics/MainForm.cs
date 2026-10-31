@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using G13Reborn.Device;
 using G13Reborn.Device.Hid;
+using G13Reborn.VirtualController;
 
 namespace G13Reborn.Diagnostics;
 
@@ -21,6 +22,13 @@ public sealed class MainForm : Form
     private readonly Label _buttons = new();
     private readonly Label _rawButtons = new();
     private readonly Label _dropped = new();
+    private readonly Label _auxButtons = new();
+    private readonly Label _vJoyStatus = new() { AutoSize = true, Text = "vJoy: off.", TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Button _startVJoy = new() { Text = "Enable vJoy", AutoSize = true };
+    private readonly Button _stopVJoy = new() { Text = "Disable vJoy", AutoSize = true };
+    private readonly NumericUpDown _deadzone = new() { Minimum = 0, Maximum = 30, Value = 10, Width = 50 };
+    private readonly CheckBox _invertY = new() { Text = "Invert Y", AutoSize = true };
+    private readonly object _virtualGate = new();
     private readonly JoystickView _joystick = new();
     private readonly ListBox _recent = new();
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 50 };
@@ -29,6 +37,10 @@ public sealed class MainForm : Form
 
     private int _pendingCount;
     private int _droppedCount;
+    private int _deadzonePercent = 10;
+    private int _invertYAxis;
+    private int _vJoyErrorPending;
+    private VJoyDevice? _vJoy;
     private StreamWriter? _captureWriter;
     private G13InputReader? _reader;
     private CancellationTokenSource? _readCancellation;
@@ -48,8 +60,9 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 4
+            RowCount = 5
         };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 195));
@@ -67,6 +80,25 @@ public sealed class MainForm : Form
             new Control[] { refresh, _connect, _disconnect, _startCapture, _stopCapture });
         root.Controls.Add(actions, 0, 0);
 
+        // Optional software-only output; no driver installation or HID writes.
+        var vJoyPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        _startVJoy.Click += (_, _) => StartVJoy();
+        _stopVJoy.Click += (_, _) => StopVJoy();
+        _deadzone.ValueChanged += (_, _) =>
+            Volatile.Write(ref _deadzonePercent, (int)_deadzone.Value);
+        _invertY.CheckedChanged += (_, _) =>
+            Volatile.Write(ref _invertYAxis, _invertY.Checked ? 1 : 0);
+        vJoyPanel.Controls.AddRange(new Control[]
+        {
+            _startVJoy,
+            _stopVJoy,
+            new Label { AutoSize = true, Text = "Deadzone %:", Padding = new Padding(3, 5, 0, 0) },
+            _deadzone,
+            _invertY,
+            _vJoyStatus
+        });
+        root.Controls.Add(vJoyPanel, 0, 1);
+
         _devices.Dock = DockStyle.Fill;
         _devices.View = View.Details;
         _devices.FullRowSelect = true;
@@ -79,7 +111,7 @@ public sealed class MainForm : Form
         _devices.Columns.Add("Version", 85);
         _devices.Columns.Add("Device path", 700);
         _devices.SelectedIndexChanged += (_, _) => UpdateButtonState();
-        root.Controls.Add(_devices, 0, 1);
+        root.Controls.Add(_devices, 0, 2);
 
         var monitor = new TableLayoutPanel
         {
@@ -92,7 +124,8 @@ public sealed class MainForm : Form
         _joystick.Dock = DockStyle.Fill;
         monitor.Controls.Add(_joystick, 0, 0);
 
-        var details = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5 };
+        var details = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6 };
+        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
@@ -101,9 +134,10 @@ public sealed class MainForm : Form
         _status.Text = "Not connected.";
         _axes.Text = "Thumbstick X: --    Y: --";
         _buttons.Text = "G-keys: --";
+        _auxButtons.Text = "Other buttons: --";
         _rawButtons.Text = "Other button bits: --";
         _dropped.Text = "UI queue dropped: 0 (file capture records all reports)";
-        foreach (var label in new[] { _status, _axes, _buttons, _rawButtons, _dropped })
+        foreach (var label in new[] { _status, _axes, _buttons, _auxButtons, _rawButtons, _dropped })
         {
             label.Dock = DockStyle.Fill;
             label.AutoEllipsis = true;
@@ -111,7 +145,7 @@ public sealed class MainForm : Form
             details.Controls.Add(label, 0, details.Controls.Count);
         }
         monitor.Controls.Add(details, 1, 0);
-        root.Controls.Add(monitor, 0, 2);
+        root.Controls.Add(monitor, 0, 3);
 
         var logPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         logPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -127,7 +161,7 @@ public sealed class MainForm : Form
         _recent.HorizontalScrollbar = true;
         _recent.Font = new Font(FontFamily.GenericMonospace, 9f);
         logPanel.Controls.Add(_recent, 0, 1);
-        root.Controls.Add(logPanel, 0, 3);
+        root.Controls.Add(logPanel, 0, 4);
 
         _refreshTimer.Tick += (_, _) => DrainReports();
         _refreshTimer.Start();
@@ -242,6 +276,37 @@ public sealed class MainForm : Form
             }
         }
 
+        if (G13InputReport.TryParse(bytes, out var state) && state is not null)
+        {
+            try
+            {
+                lock (_virtualGate)
+                {
+                    _vJoy?.Update(
+                        state.X, state.Y,
+                        Volatile.Read(ref _deadzonePercent) / 100.0,
+                        Volatile.Read(ref _invertYAxis) != 0);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (Interlocked.Exchange(ref _vJoyErrorPending, 1) == 0 &&
+                    !IsDisposed && IsHandleCreated)
+                {
+                    try
+                    {
+                        BeginInvoke((MethodInvoker)(() =>
+                        {
+                            if (IsDisposed) return;
+                            StopVJoy();
+                            _vJoyStatus.Text = "vJoy error: " + ex.Message;
+                        }));
+                    }
+                    catch (InvalidOperationException) { }
+                }
+            }
+        }
+
         _incoming.Enqueue(sample);
         Interlocked.Increment(ref _pendingCount);
         if (Volatile.Read(ref _pendingCount) > MaxQueuedReports &&
@@ -283,6 +348,9 @@ public sealed class MainForm : Form
                 _buttons.Text = "G-keys: " +
                     (string.Join(", ", state.PressedGKeys.Select(n => "G" + n)) is var keys &&
                      keys.Length > 0 ? keys : "(none)");
+                _auxButtons.Text = "Other buttons: " +
+                    (string.Join(", ", state.PressedAuxiliaryKeys) is var aux &&
+                     aux.Length > 0 ? aux : "(none)");
                 _rawButtons.Text = "Button bytes [3..7]: " +
                     Convert.ToHexString(state.ButtonBytes.Span);
                 _joystick.SetPosition(state.X, state.Y);
@@ -315,6 +383,8 @@ public sealed class MainForm : Form
         }
 
         cancellation?.Dispose();
+        // Always release the virtual device to prevent a stuck axis when unplugged.
+        StopVJoy();
         _status.Text = "Disconnected.";
         UpdateButtonState();
     }
@@ -358,12 +428,48 @@ public sealed class MainForm : Form
         UpdateButtonState();
     }
 
+    private void StartVJoy()
+    {
+        if (_reader is null) return;
+
+        try
+        {
+            lock (_virtualGate)
+            {
+                _vJoy?.Dispose();
+                _vJoy = VJoyDevice.Open(1);
+            }
+            Interlocked.Exchange(ref _vJoyErrorPending, 0);
+            _vJoyStatus.Text = "vJoy #1 active: analog X/Y only.";
+        }
+        catch (Exception ex)
+        {
+            _vJoyStatus.Text = "vJoy unavailable: " + ex.Message;
+        }
+        UpdateButtonState();
+    }
+
+    private void StopVJoy()
+    {
+        lock (_virtualGate)
+        {
+            _vJoy?.Dispose();
+            _vJoy = null;
+        }
+        _vJoyStatus.Text = "vJoy: off.";
+        UpdateButtonState();
+    }
+
     private void UpdateButtonState()
     {
         _connect.Enabled = _reader is null && _devices.SelectedItems.Count > 0;
         _disconnect.Enabled = _reader is not null;
         _startCapture.Enabled = _captureWriter is null;
         _stopCapture.Enabled = _captureWriter is not null;
+        bool vJoyActive;
+        lock (_virtualGate) vJoyActive = _vJoy is not null;
+        _startVJoy.Enabled = _reader is not null && !vJoyActive;
+        _stopVJoy.Enabled = vJoyActive;
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -371,6 +477,7 @@ public sealed class MainForm : Form
         _refreshTimer.Stop();
         _readCancellation?.Cancel();
         _reader?.Dispose();
+        StopVJoy();
         StopCapture();
         base.OnFormClosed(e);
     }

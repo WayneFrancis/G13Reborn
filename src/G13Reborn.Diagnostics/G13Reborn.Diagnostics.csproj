@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../G13Reborn.Device/G13Reborn.Device.csproj" />
+    <ProjectReference Include="../G13Reborn.VirtualController/G13Reborn.VirtualController.csproj" />
   </ItemGroup>
 </Project>

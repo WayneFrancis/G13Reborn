@@ -256,7 +256,11 @@ public sealed class MainForm : Form
                 BeginInvoke((MethodInvoker)(() =>
                 {
                     if (!IsDisposed)
+                    {
+                        // An unplugged G13 must not leave the virtual stick held.
+                        StopVJoy();
                         _status.Text = "Read stopped: " + ex.Message;
+                    }
                 }));
             }
             catch (InvalidOperationException) { }

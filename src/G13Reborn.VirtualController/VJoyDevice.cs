@@ -22,6 +22,9 @@ public sealed class VJoyDevice : IDisposable
     private readonly AxisRange _axisMin;
     private readonly AxisRange _axisMax;
     private readonly SetAxis _setAxis;
+    private readonly GetButtonCount _getButtonCount;
+    private readonly SetButton _setButton;
+    private uint _currentButtons;
     private readonly Reset _reset;
     private readonly (int Min, int Max) _xRange;
     private readonly (int Min, int Max) _yRange;
@@ -56,6 +59,14 @@ public sealed class VJoyDevice : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private delegate bool Reset(uint id);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int GetButtonCount(uint id);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private delegate bool SetButton(
+        [MarshalAs(UnmanagedType.Bool)] bool pressed, uint deviceId, byte button);
+
     private VJoyDevice(IntPtr dll, uint id)
     {
         _dll = dll;
@@ -69,6 +80,8 @@ public sealed class VJoyDevice : IDisposable
         _axisMax = Get<AxisRange>("GetVJDAxisMax");
         _setAxis = Get<SetAxis>("SetAxis");
         _reset = Get<Reset>("ResetVJD");
+        _getButtonCount = Get<GetButtonCount>("GetVJDButtonNumber");
+        _setButton = Get<SetButton>("SetBtn");
 
         if (!_enabled())
             throw new InvalidOperationException("vJoy is installed but its driver is disabled.");
@@ -89,6 +102,7 @@ public sealed class VJoyDevice : IDisposable
 
         _xRange = GetRange(HidUsageX);
         _yRange = GetRange(HidUsageY);
+        ButtonCount = Math.Clamp(_getButtonCount(id), 0, 128);
 
         if (!_acquire(id))
             throw new InvalidOperationException($"Unable to acquire vJoy device {id}.");
@@ -101,6 +115,9 @@ public sealed class VJoyDevice : IDisposable
             throw new InvalidOperationException($"Unable to reset vJoy device {id}.");
         }
     }
+
+    /// <summary>Number of virtual buttons configured for this vJoy device.</summary>
+    public int ButtonCount { get; }
 
     public static VJoyDevice Open(uint deviceId = 1)
     {
@@ -156,10 +173,46 @@ public sealed class VJoyDevice : IDisposable
             throw new InvalidOperationException("vJoy failed to update X/Y axes. Check device ownership.");
     }
 
+    /// <summary>
+    /// Forward only changed button states, so multiple G13 keys mapped to one
+    /// virtual button work together. Supports vJoy buttons 1 through 32.
+    /// Caller must hold the same synchronization lock used for analog updates.
+    /// </summary>
+    public void UpdateButtons(uint desiredMask)
+    {
+        if (!_owned || _dll == IntPtr.Zero)
+            throw new ObjectDisposedException(nameof(VJoyDevice));
+
+        int count = Math.Min(ButtonCount, 32);
+        uint validMask = count == 32 ? uint.MaxValue :
+            count == 0 ? 0 : (1u << count) - 1u;
+        desiredMask &= validMask;
+
+        uint changed = _currentButtons ^ desiredMask;
+        for (int bit = 0; bit < count; bit++)
+        {
+            uint mask = 1u << bit;
+            if ((changed & mask) == 0)
+                continue;
+
+            bool pressed = (desiredMask & mask) != 0;
+            if (!_setButton(pressed, _id, (byte)(bit + 1)))
+                throw new InvalidOperationException(
+                    $"Could not set virtual button {bit + 1} to {(pressed ? "pressed" : "released")}.");
+
+            // Update per button so failures leave the correct partial state.
+            if (pressed) _currentButtons |= mask;
+            else _currentButtons &= ~mask;
+        }
+    }
+
     public void ResetToNeutral()
     {
         if (_owned && _dll != IntPtr.Zero)
+        {
             _reset(_id);
+            _currentButtons = 0;
+        }
     }
 
     public void Dispose()
@@ -171,6 +224,7 @@ public sealed class VJoyDevice : IDisposable
             if (_owned)
             {
                 _reset(_id);
+                _currentButtons = 0;
                 _release(_id);
                 _owned = false;
             }

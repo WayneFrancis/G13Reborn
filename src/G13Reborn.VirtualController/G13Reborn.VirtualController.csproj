@@ -5,4 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../G13Reborn.Device/G13Reborn.Device.csproj" />
+  </ItemGroup>
 </Project>

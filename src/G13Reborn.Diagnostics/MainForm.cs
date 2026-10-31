@@ -28,6 +28,9 @@ public sealed class MainForm : Form
     private readonly Button _stopVJoy = new() { Text = "Disable vJoy", AutoSize = true };
     private readonly NumericUpDown _deadzone = new() { Minimum = 0, Maximum = 30, Value = 10, Width = 50 };
     private readonly CheckBox _invertY = new() { Text = "Invert Y", AutoSize = true };
+    private readonly CheckBox _forwardButtons = new() { Text = "Forward buttons to vJoy", AutoSize = true };
+    private readonly Button _editMappings = new() { Text = "Edit mappings...", AutoSize = true };
+    private readonly Label _mappingStatus = new() { AutoSize = true, Text = "Button forwarding is off." };
     private readonly object _virtualGate = new();
     private readonly JoystickView _joystick = new();
     private readonly ListBox _recent = new();
@@ -41,6 +44,8 @@ public sealed class MainForm : Form
     private int _invertYAxis;
     private int _vJoyErrorPending;
     private VJoyDevice? _vJoy;
+    private G13ButtonMappings _buttonMappings = G13ButtonMappings.CreateDefault();
+    private int _forwardButtonReports;
     private StreamWriter? _captureWriter;
     private G13InputReader? _reader;
     private CancellationTokenSource? _readCancellation;
@@ -60,8 +65,9 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 5
+            RowCount = 6
         };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
@@ -99,6 +105,23 @@ public sealed class MainForm : Form
         });
         root.Controls.Add(vJoyPanel, 0, 1);
 
+        var mappingPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        _forwardButtons.CheckedChanged += (_, _) => ForwardButtonsChanged();
+        _editMappings.Click += (_, _) => EditMappingsClicked();
+        mappingPanel.Controls.AddRange(new Control[] { _forwardButtons, _editMappings, _mappingStatus });
+        root.Controls.Add(mappingPanel, 0, 2);
+
+        try
+        {
+            _buttonMappings = ButtonMappingStore.Load();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Button mappings could not be loaded. Defaults will be used.\r\n" +
+                ex.Message, "G13Reborn: mappings", MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+
         _devices.Dock = DockStyle.Fill;
         _devices.View = View.Details;
         _devices.FullRowSelect = true;
@@ -111,7 +134,7 @@ public sealed class MainForm : Form
         _devices.Columns.Add("Version", 85);
         _devices.Columns.Add("Device path", 700);
         _devices.SelectedIndexChanged += (_, _) => UpdateButtonState();
-        root.Controls.Add(_devices, 0, 2);
+        root.Controls.Add(_devices, 0, 3);
 
         var monitor = new TableLayoutPanel
         {
@@ -145,7 +168,7 @@ public sealed class MainForm : Form
             details.Controls.Add(label, 0, details.Controls.Count);
         }
         monitor.Controls.Add(details, 1, 0);
-        root.Controls.Add(monitor, 0, 3);
+        root.Controls.Add(monitor, 0, 4);
 
         var logPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         logPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -161,7 +184,7 @@ public sealed class MainForm : Form
         _recent.HorizontalScrollbar = true;
         _recent.Font = new Font(FontFamily.GenericMonospace, 9f);
         logPanel.Controls.Add(_recent, 0, 1);
-        root.Controls.Add(logPanel, 0, 4);
+        root.Controls.Add(logPanel, 0, 5);
 
         _refreshTimer.Tick += (_, _) => DrainReports();
         _refreshTimer.Start();
@@ -286,10 +309,17 @@ public sealed class MainForm : Form
             {
                 lock (_virtualGate)
                 {
-                    _vJoy?.Update(
-                        state.X, state.Y,
-                        Volatile.Read(ref _deadzonePercent) / 100.0,
-                        Volatile.Read(ref _invertYAxis) != 0);
+                    if (_vJoy is not null)
+                    {
+                        _vJoy.Update(
+                            state.X, state.Y,
+                            Volatile.Read(ref _deadzonePercent) / 100.0,
+                            Volatile.Read(ref _invertYAxis) != 0);
+                        uint buttons = Volatile.Read(ref _forwardButtonReports) != 0
+                            ? Volatile.Read(ref _buttonMappings).GetPressedMask(state, _vJoy.ButtonCount)
+                            : 0;
+                        _vJoy.UpdateButtons(buttons);
+                    }
                 }
             }
             catch (Exception ex)
@@ -432,6 +462,55 @@ public sealed class MainForm : Form
         UpdateButtonState();
     }
 
+    private void ForwardButtonsChanged()
+    {
+        // The background reader consults this flag on each HID report.
+        Volatile.Write(ref _forwardButtonReports, _forwardButtons.Checked ? 1 : 0);
+        if (!_forwardButtons.Checked)
+        {
+            try
+            {
+                lock (_virtualGate) _vJoy?.UpdateButtons(0);
+            }
+            catch (Exception ex)
+            {
+                _vJoyStatus.Text = "Button release failed: " + ex.Message;
+            }
+        }
+        _mappingStatus.Text = _forwardButtons.Checked
+            ? "Button mapping enabled (requires vJoy buttons in vJoyConf)."
+            : "Button forwarding is off.";
+    }
+
+    private void EditMappingsClicked()
+    {
+        int? count;
+        lock (_virtualGate) count = _vJoy?.ButtonCount;
+
+        using var dialog = new ButtonMappingsDialog(
+            Volatile.Read(ref _buttonMappings), count);
+        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Result is null)
+            return;
+
+        try
+        {
+            ButtonMappingStore.Save(dialog.Result);
+            // Release old mapping states before installing a new snapshot.
+            lock (_virtualGate)
+            {
+                _vJoy?.UpdateButtons(0);
+                Volatile.Write(ref _buttonMappings, dialog.Result);
+            }
+            _mappingStatus.Text = "Mappings saved. " +
+                (_forwardButtons.Checked ? "Button forwarding enabled." : "Button forwarding off.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Could not save mappings",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     private void StartVJoy()
     {
         if (_reader is null) return;
@@ -445,7 +524,9 @@ public sealed class MainForm : Form
                 _vJoy = VJoyDevice.Open(1);
             }
             Interlocked.Exchange(ref _vJoyErrorPending, 0);
-            _vJoyStatus.Text = "vJoy #1 active: analog X/Y only.";
+            int count;
+            lock (_virtualGate) count = _vJoy!.ButtonCount;
+            _vJoyStatus.Text = $"vJoy #1: X/Y and {count} available buttons.";
         }
         catch (Exception ex)
         {

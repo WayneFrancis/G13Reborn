@@ -16,6 +16,14 @@ public sealed class G13InputReport
     public byte Y { get; }
     public ReadOnlyMemory<byte> ButtonBytes => _buttons;
 
+    /// <summary>Read one physical button bit from the five button bytes.</summary>
+    public bool IsPhysicalBitPressed(int bit)
+    {
+        if (bit is < 0 or >= 40)
+            throw new ArgumentOutOfRangeException(nameof(bit));
+        return (_buttons[bit / 8] & (1 << (bit % 8))) != 0;
+    }
+
     private static readonly string[] AuxiliaryNames =
     {
         // Report byte 6: BD, L1-L4, M1-M3

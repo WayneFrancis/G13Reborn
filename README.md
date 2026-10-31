@@ -6,7 +6,7 @@ A modern, open-source Windows control application for the Logitech G13 Advanced 
 
 Restore the G13's **true analog thumbstick**, while eventually replacing legacy Logitech Gaming Software functionality: programmable keys, macros, application profiles, LCD and lighting.
 
-**Current milestone: working G13 HID diagnostics plus optional analog DirectInput output through vJoy.** G13Reborn does not install drivers or write reports to the G13.
+**Current milestone: working G13 HID diagnostics, analog DirectInput axes and opt-in configurable virtual button forwarding through vJoy.** G13Reborn does not install drivers or write reports to the G13.
 
 ## Requirements
 
@@ -25,7 +25,9 @@ Restore the G13's **true analog thumbstick**, while eventually replacing legacy 
 7. Use **Start capture...** to write every received report to a timestamped TSV file for troubleshooting.
 8. Optionally install and enable a supported x64 **vJoy** driver; configure device #1 with X and Y axes in vJoyConf.
 9. Click **Enable vJoy** while connected to the G13. Move the thumbstick and open `joy.cpl` to inspect the virtual controller's X/Y axes.
-10. Adjust the **Deadzone %** control (0-30%) and **Invert Y** setting if needed. Disable vJoy when not needed.
+10. Adjust the **Deadzone %** control (0-30%) and **Invert Y** setting if needed.
+11. To test gamepad buttons, configure vJoy device 1 with **32 buttons** in vJoyConf, restart/enable vJoy in G13Reborn, and check **Forward buttons to vJoy**.
+12. Use **Edit mappings...** to change physical-G13-button to virtual-button assignments (None, 1-32). The mappings are saved under `%LOCALAPPDATA%\G13Reborn\button-mappings.json`.
 
 The application searches for USB VID 046D / PID C21C. It enumerates HID interfaces even when the Logitech application holds them open.
 
@@ -35,9 +37,9 @@ The application searches for USB VID 046D / PID C21C. It enumerates HID interfac
 - Logitech Gaming Software or the Windows driver may prevent opening the HID interface. In that case the app reports the Windows error; do not uninstall drivers or use Zadig yet.
 - Some firmware/driver combinations may require a device initialization feature report before streaming input. This milestone deliberately does not send one.
 - The report decoder expects report ID 01 and the 8-byte input layout documented by community drivers; the raw hex log is always retained for investigating variants.
-- A G13 owner has confirmed raw analog X/Y changes and simultaneous button reports. **The new vJoy backend has not yet been tested with a real G13 and vJoy installation.**
+- A G13 owner has confirmed raw analog X/Y changes, simultaneous G-key reports and **working analog vJoy movement in joy.cpl on Windows 11**. Virtual button mapping still requires hardware testing.
 - vJoy is a separately installed optional Windows virtual-joystick driver. G13Reborn locates its native x64 interface DLL at runtime (normally under Program Files\\vJoy\\x64); alternatively set `VJOY_INTERFACE_DLL` to the absolute DLL path.
-- This milestone forwards only analog X/Y to vJoy device #1. G-keys and thumb buttons remain read-only diagnostics; future milestones will make their mappings configurable.
+- Analog X/Y are always forwarded while vJoy is enabled. G-keys and thumb buttons are forwarded **only** when the opt-in checkbox is enabled. Default assignments use G1-G22 => vJoy buttons 1-22 and three thumb controls => 23-25; the other controls are unassigned. The physical button labels have not all been individually verified on hardware. Duplicate mappings are supported. If vJoy is configured with fewer than 32 buttons, assignments beyond that limit are ignored.
 - The virtual device is reset and released on disconnect or program exit so a held joystick position is not left behind.
 - vJoy presents a **DirectInput** controller; it does not pretend to be an Xbox/XInput controller. Some games accept only XInput.
 
@@ -46,7 +48,7 @@ The application searches for USB VID 046D / PID C21C. It enumerates HID interfac
 - G13Reborn.Device: Windows HID discovery, read-only input streaming, and G13 input packet decoder.
 - G13Reborn.Diagnostics: WinForms diagnostic UI with input log, stick visualisation, and optional vJoy controls.
 - G13Reborn.VirtualController: analog deadzone/sensitivity mapping and dynamically loaded vJoy feeder (no NuGet packages).
-- G13Reborn.SmokeTests: parser and analog mapping tests without hardware.
+- G13Reborn.SmokeTests: parser, analog mapping and button mapping tests without hardware.
 
 ## Protocol references
 
@@ -60,7 +62,8 @@ This project is independently implemented. No source code was copied from these 
 1. ~~Confirm Windows can enumerate the G13 and read analog thumbstick values.~~
 2. ~~Add basic deadzone and auxiliary-button identification.~~ (refine physical calibration later)
 3. **Test vJoy virtual DirectInput analog X/Y output on Windows 11.**
-4. Add editable key and thumb-button mapping, profiles, macros, LCD, RGB and an optional XInput backend.
+4. **Test configurable vJoy button forwarding, then build keyboard/mouse mapping and application profiles.**
+5. Add macros, LCD, RGB, calibration presets and an optional XInput backend.
 
 This repository's licence has not yet been selected.
 

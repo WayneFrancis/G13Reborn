@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/G13Reborn.Device/G13Reborn.Device.csproj" />
+  <Project Path="src/G13Reborn.Diagnostics/G13Reborn.Diagnostics.csproj" />
+</Solution>

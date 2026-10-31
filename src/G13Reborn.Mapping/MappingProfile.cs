@@ -13,7 +13,8 @@ public enum MappingKind
     MouseMiddle,
     WheelUp,
     WheelDown,
-    VJoyButton
+    VJoyButton,
+    Macro
 }
 
 public sealed class ButtonAction
@@ -29,6 +30,8 @@ public sealed class MappingProfile
     public Dictionary<int, ButtonAction> Buttons { get; set; } = new();
     /// <summary>Executable file names, e.g. notepad.exe, that activate this profile.</summary>
     public List<string> ExecutableNames { get; set; } = new();
+    /// <summary>Macros are owned by their profile and saved with it.</summary>
+    public List<MacroDefinition> Macros { get; set; } = new();
     public int DeadzonePercent { get; set; } = 10;
     public bool InvertY { get; set; }
 
@@ -60,6 +63,7 @@ public sealed class MappingProfile
             DeadzonePercent = DeadzonePercent,
             InvertY = InvertY,
             ExecutableNames = new List<string>(ExecutableNames),
+            Macros = Macros.Select(m => m.Clone()).ToList(),
             Buttons = Buttons.ToDictionary(
                 entry => entry.Key,
                 entry => new ButtonAction
@@ -78,6 +82,13 @@ public sealed class MappingProfile
             throw new ArgumentException("Deadzone must be between 0 and 30%.");
         if (ExecutableNames is null)
             throw new ArgumentException("Executable associations cannot be null.");
+        if (Macros is null)
+            throw new ArgumentException("Macro definitions cannot be null.");
+        if (Macros.Select(m => m.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count() != Macros.Count)
+            throw new ArgumentException($"Profile '{Name}' has duplicate macro names.");
+        foreach (var macro in Macros)
+            macro.Validate();
         var normalizedNames = ExecutableNames
             .Select(ExecutableProfileMatcher.NormalizeExecutableName).ToList();
         if (normalizedNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() !=
@@ -91,6 +102,11 @@ public sealed class MappingProfile
                 throw new ArgumentException($"Button {bit} has no action.");
             if (action.Kind == MappingKind.Keyboard)
                 KeyboardChord.Parse(action.Parameter);
+            if (action.Kind == MappingKind.Macro &&
+                !Macros.Any(m => string.Equals(m.Name, action.Parameter,
+                    StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException(
+                    $"Physical bit {bit}: macro '{action.Parameter}' was not found in profile '{Name}'.");
             if (action.Kind == MappingKind.VJoyButton &&
                 (!int.TryParse(action.Parameter, out int n) || n is < 1 or > 32))
                 throw new ArgumentException(

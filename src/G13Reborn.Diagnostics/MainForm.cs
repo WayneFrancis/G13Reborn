@@ -437,6 +437,7 @@ public sealed class MainForm : Form
             lock (_virtualGate)
             {
                 _vJoy?.Dispose();
+                _vJoy = null;
                 _vJoy = VJoyDevice.Open(1);
             }
             Interlocked.Exchange(ref _vJoyErrorPending, 0);

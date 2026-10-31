@@ -94,7 +94,12 @@ public sealed class VJoyDevice : IDisposable
             throw new InvalidOperationException($"Unable to acquire vJoy device {id}.");
         _owned = true;
         if (!_reset(id))
+        {
+            // The device has been acquired: release it before constructor failure.
+            _release(id);
+            _owned = false;
             throw new InvalidOperationException($"Unable to reset vJoy device {id}.");
+        }
     }
 
     public static VJoyDevice Open(uint deviceId = 1)

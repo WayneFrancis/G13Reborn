@@ -15,6 +15,15 @@ public sealed class MainForm : Form
     private readonly Button _addProfile = new() { Text = "New / Clone...", AutoSize = true };
     private readonly Button _deleteProfile = new() { Text = "Delete", AutoSize = true };
     private readonly Button _saveProfile = new() { Text = "Save profile", AutoSize = true };
+    private readonly CheckBox _autoSwitch = new() { Text = "Auto-switch by foreground app", AutoSize = true };
+    private readonly TextBox _associatedExecutables = new()
+    {
+        Width = 295, PlaceholderText = "notepad.exe, kenshi_x64.exe"
+    };
+    private readonly Label _activeProfileInfo = new()
+    {
+        AutoSize = true, Text = "Active: --", Padding = new Padding(3, 7, 0, 0)
+    };
     private readonly ComboBox _devices = new() { Width = 330, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Button _refresh = new() { Text = "Refresh", AutoSize = true };
     private readonly Button _start = new() { Text = "Start forwarding", AutoSize = true };
@@ -46,6 +55,10 @@ public sealed class MainForm : Form
     private bool _nativeOutputEnabled;
     private MappingProfile? _activeProfile;
     private ButtonTransitionEngine? _engine;
+    private readonly ButtonReleaseGate _releaseGate = new();
+    private G13InputReport? _lastReport;
+    private DateTime _nextForegroundPoll = DateTime.MinValue;
+    private string? _foregroundName;
     private G13InputReader? _reader;
     private VJoyDevice? _vJoy;
     private CancellationTokenSource? _cancellation;
@@ -74,9 +87,10 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 6,
             Padding = new Padding(12)
         };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
@@ -91,19 +105,29 @@ public sealed class MainForm : Form
         });
         root.Controls.Add(profileBar, 0, 0);
 
+        var associationBar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, WrapContents = false
+        };
+        associationBar.Controls.AddRange(new Control[]
+        {
+            _autoSwitch, TextLabel("Profile executables"), _associatedExecutables, _activeProfileInfo
+        });
+        root.Controls.Add(associationBar, 0, 1);
+
         var deviceBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         deviceBar.Controls.AddRange(new Control[]
         {
             TextLabel("G13 HID"), _devices, _refresh, _start, _stop
         });
-        root.Controls.Add(deviceBar, 0, 1);
+        root.Controls.Add(deviceBar, 0, 2);
 
         var optionsBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         optionsBar.Controls.AddRange(new Control[]
         {
             _vJoyEnabled, _keyboardMouse, TextLabel("Deadzone %"), _deadzone, _invertY
         });
-        root.Controls.Add(optionsBar, 0, 2);
+        root.Controls.Add(optionsBar, 0, 3);
 
         _grid.Dock = DockStyle.Fill;
         _grid.AllowUserToAddRows = false;
@@ -146,7 +170,7 @@ public sealed class MainForm : Form
             e.ThrowException = false;
             _status.Text = "Invalid cell value: " + e.Exception?.Message;
         };
-        root.Controls.Add(_grid, 0, 3);
+        root.Controls.Add(_grid, 0, 4);
 
         var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         bottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -155,7 +179,7 @@ public sealed class MainForm : Form
         _activity.Dock = DockStyle.Fill;
         bottom.Controls.Add(_status, 0, 0);
         bottom.Controls.Add(_activity, 0, 1);
-        root.Controls.Add(bottom, 0, 4);
+        root.Controls.Add(bottom, 0, 5);
 
         _profiles.SelectionChangeCommitted += (_, _) => ProfileSelected();
         _addProfile.Click += (_, _) => CloneProfile();
@@ -166,6 +190,8 @@ public sealed class MainForm : Form
         _stop.Click += async (_, _) => await StopForwardingAsync();
         _deadzone.ValueChanged += (_, _) => MarkDirty();
         _invertY.CheckedChanged += (_, _) => MarkDirty();
+        _autoSwitch.CheckedChanged += (_, _) => MarkDirty();
+        _associatedExecutables.TextChanged += (_, _) => MarkDirty();
 
         try
         {
@@ -220,6 +246,8 @@ public sealed class MainForm : Form
             _profiles.SelectedItem = profile.Name;
             _deadzone.Value = profile.DeadzonePercent;
             _invertY.Checked = profile.InvertY;
+            _associatedExecutables.Text = string.Join(", ", profile.ExecutableNames);
+            _autoSwitch.Checked = _document.AutoSwitchEnabled;
             _grid.Rows.Clear();
 
             foreach (var button in G13ButtonMappings.PhysicalButtons)
@@ -253,6 +281,11 @@ public sealed class MainForm : Form
             var replacement = Current().Clone(_currentName);
             replacement.DeadzonePercent = (int)_deadzone.Value;
             replacement.InvertY = _invertY.Checked;
+            replacement.ExecutableNames = _associatedExecutables.Text
+                .Split(new[] { ',', ';', '\r', '\n' },
+                    StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(ExecutableProfileMatcher.NormalizeExecutableName)
+                .ToList();
             replacement.Buttons.Clear();
             foreach (DataGridViewRow row in _grid.Rows)
             {
@@ -272,10 +305,13 @@ public sealed class MainForm : Form
             var previous = _document.Profiles[index];
             _document.Profiles[index] = replacement;
             _document.SelectedProfile = _currentName;
+            bool previousAutoSwitch = _document.AutoSwitchEnabled;
+            _document.AutoSwitchEnabled = _autoSwitch.Checked;
             try { ProfileStore.Save(_document); }
             catch
             {
                 _document.Profiles[index] = previous;
+                _document.AutoSwitchEnabled = previousAutoSwitch;
                 throw;
             }
             _dirty = false;
@@ -339,6 +375,8 @@ public sealed class MainForm : Form
         }
 
         var clone = Current().Clone(name.Trim());
+        // Profiles may not compete for the same foreground executable.
+        clone.ExecutableNames.Clear();
         _document.Profiles.Add(clone);
         _document.SelectedProfile = clone.Name;
         try
@@ -456,12 +494,15 @@ public sealed class MainForm : Form
             {
                 _activeProfile = profile;
                 _engine = engine;
+                _lastReport = null;
+                _releaseGate.Clear();
                 _vJoy = vjoy;
                 _reader = reader;
                 _nativeOutputEnabled = _keyboardMouse.Checked;
                 _cancellation = cancellation;
             }
             _running = true;
+            _nextForegroundPoll = DateTime.MinValue;
             _readTask = Task.Run(() => RunReaderAsync(reader, cancellation.Token));
             _status.Text = "Running: " + profile.Name +
                 " — press Stop / release before modifying profiles.";
@@ -511,19 +552,23 @@ public sealed class MainForm : Form
 
         lock (_gate)
         {
+            _lastReport = report;
             if (_activeProfile is null || _engine is null)
                 return;
+            // Held keys at a profile change cannot trigger newly assigned
+            // actions until physically released and pressed again.
+            G13InputReport safeReport = _releaseGate.Filter(report);
             if (_vJoy is not null)
             {
                 _vJoy.Update(
                     report.X, report.Y, _activeProfile.DeadzonePercent / 100.0,
                     _activeProfile.InvertY);
                 _vJoy.UpdateButtons(_activeProfile.GetVirtualButtons(
-                    report, _vJoy.ButtonCount));
+                    safeReport, _vJoy.ButtonCount));
             }
             if (_nativeOutputEnabled)
             {
-                foreach (var action in _engine.Apply(report))
+                foreach (var action in _engine.Apply(safeReport))
                     Win32InputSender.Send(action);
             }
             Interlocked.Increment(ref _forwardedReports);
@@ -566,6 +611,8 @@ public sealed class MainForm : Form
             _readTask = null;
             _cancellation = null;
             _nativeOutputEnabled = false;
+            _lastReport = null;
+            _releaseGate.Clear();
         }
         _status.Text = "Stopped. All injected keys/buttons released.";
         UpdateControlState();
@@ -573,11 +620,62 @@ public sealed class MainForm : Form
 
     private void RefreshStatus()
     {
+        if (_running && DateTime.UtcNow >= _nextForegroundPoll)
+        {
+            _nextForegroundPoll = DateTime.UtcNow.AddMilliseconds(300);
+            _foregroundName = ForegroundExecutable.TryGetName();
+            MappingProfile selected = ExecutableProfileMatcher.Resolve(
+                _document, _currentName, _foregroundName, _autoSwitch.Checked);
+            try
+            {
+                SwitchActiveProfile(selected);
+            }
+            catch (Exception ex)
+            {
+                // Native output has failed. Stop feeding inputs and report why.
+                _ = StopAfterProfileErrorAsync(ex);
+            }
+        }
+        string activeName;
+        lock (_gate) activeName = _activeProfile?.Name ?? "(stopped)";
+        _activeProfileInfo.Text = "Active: " + activeName;
         _activity.Text =
             $"HID input reports: {Interlocked.Read(ref _inputReports):N0}  |  " +
             $"Processed reports: {Interlocked.Read(ref _forwardedReports):N0}  |  " +
             $"Stick X/Y: {Volatile.Read(ref _lastX)}/{Volatile.Read(ref _lastY)}  |  " +
             $"Pressed controls: {Volatile.Read(ref _pressedCount)}";
+    }
+
+    private void SwitchActiveProfile(MappingProfile selected)
+    {
+        lock (_gate)
+        {
+            if (_activeProfile is null ||
+                string.Equals(_activeProfile.Name, selected.Name,
+                    StringComparison.OrdinalIgnoreCase))
+                return;
+
+            // Release old output before accepting any input in the new profile.
+            if (_engine is not null && _nativeOutputEnabled)
+                foreach (InputEvent action in _engine.ReleaseAll())
+                    Win32InputSender.Send(action);
+            _vJoy?.UpdateButtons(0);
+
+            _releaseGate.BlockCurrentlyHeld(_lastReport);
+            _activeProfile = selected.Clone(selected.Name);
+            _engine = new ButtonTransitionEngine(_activeProfile);
+        }
+
+        _status.Text = $"Switched to '{selected.Name}' for " +
+            (_foregroundName ?? "an unknown application") + ".";
+    }
+
+    private async Task StopAfterProfileErrorAsync(Exception ex)
+    {
+        if (!_running) return;
+        await StopForwardingAsync();
+        if (!IsDisposed)
+            _status.Text = "Automatic profile switch failed: " + ex.Message;
     }
 
     private void UpdateControlState()
@@ -586,6 +684,8 @@ public sealed class MainForm : Form
         _addProfile.Enabled = !_running;
         _deleteProfile.Enabled = !_running && _document.Profiles.Count > 1;
         _saveProfile.Enabled = !_running;
+        _autoSwitch.Enabled = !_running;
+        _associatedExecutables.Enabled = !_running;
         _devices.Enabled = !_running;
         _refresh.Enabled = !_running;
         _keyboardMouse.Enabled = !_running;
@@ -615,6 +715,8 @@ public sealed class MainForm : Form
                         try { Win32InputSender.Send(action); } catch { }
                 _vJoy?.Dispose();
                 _vJoy = null;
+                _lastReport = null;
+                _releaseGate.Clear();
             }
             _cancellation?.Dispose();
             _running = false;

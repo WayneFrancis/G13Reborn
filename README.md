@@ -13,7 +13,7 @@ The physical G13's analog X/Y thumbstick is readable through the existing Window
 - Assign any G-key or thumb button to: Disabled (`None`), a **keyboard chord** such as `Ctrl+Shift+F1`, held left/right/middle **mouse button**, single-step wheel up/down, or a **vJoy button 1-32**.
 - A held physical button holds its keyboard/mouse target down; releasing it releases the corresponding input. Shared modifier keys stay pressed until the last mapped control is released. Mouse-wheel steps trigger only on a new press, not on every HID report.
 - Separate **opt-in** checkboxes for native keyboard/mouse input and vJoy input. When forwarding stops or the G13 disconnects, the application attempts to release all injected keys/buttons and reset the virtual joystick.
-- Create and delete profiles; clone existing profiles, edit and save. Profiles are **selected manually** for now. Automatic game detection is planned.
+- Create, clone, delete and manually select profiles. Optionally associate executable file names (e.g. `notepad.exe`) with profiles and enable automatic switching based on the foreground application's process name. The selected profile is the fallback whenever no association matches.
 - Profiles persist in `%LOCALAPPDATA%\G13Reborn\profiles.json`. This is separate from the earlier diagnostics-only `button-mappings.json`.
 
 **G13Reborn.Diagnostics** — retains HID discovery, read-only report capture, button-bit inspection, and earlier vJoy tests. Use it to troubleshoot the device; don't leave it forwarding simultaneously with the Config app.
@@ -38,7 +38,7 @@ dotnet run --project src\G13Reborn.Config
 
 - **Logitech Gaming Software (LGS) might still emit its original programmed keystrokes.** G13Reborn reads HID input separately but cannot suppress LGS output. Disable/unbind conflicting LGS mappings or close LGS when testing to avoid duplicates.
 - **Keyboard/mouse injection uses Windows `SendInput`**, so it follows standard desktop input focus and Windows integrity/UIPI protections: it generally cannot control elevated applications from a non-elevated process. This is not a kernel-level remapper.
-- The first version sends keyboard virtual-key events and basic mouse button/wheel events. It does not yet support text macros, key sequences/timings, automatic process-specific profiles, physical-key suppression, application-window targeting, LCD or backlighting.
+- The first version sends keyboard virtual-key events and basic mouse button/wheel events. It does not yet support text macros, key sequences/timings, suppression of Logitech Gaming Software output, application-window targeting, LCD or backlighting.
 - vJoy is a third-party DirectInput virtual joystick; some games accept only XInput. Install the signed upstream driver from https://github.com/BrunnerInnovation/vJoy/releases (do not compile or replace its kernel driver just for this app).
 - The Config and Diagnostics processes should not simultaneously acquire vJoy Device 1. Only one feeder can own it.
 - Physical button names beyond the G keys/thumb controls have not all been confirmed; the app's mapping list derives from current known report bits. No driver changes are made.
@@ -60,3 +60,22 @@ dotnet run --configuration Release --project tests\G13Reborn.SmokeTests
 ```
 
 Protocol background: https://github.com/golgote/G13 and https://github.com/cavefish-dev/g13-driver . Independently implemented without copying their source. Repository licence is not yet selected.
+
+## Automatic profile switching
+
+1. Stop input forwarding.
+2. Choose an existing profile, or clone your current profile with **New / Clone...**. Clones intentionally start with no executable associations to avoid ambiguous matches.
+3. In **Profile executables**, enter one or more executable file names separated by commas, such as `notepad.exe, kenshi_x64.exe`. Enter **file names only**, not paths or window titles.
+4. Tick **Auto-switch by foreground app** and click **Save profile**.
+5. Select the **manual fallback profile** in the top-left dropdown, then enable an output type and click **Start forwarding**.
+6. Switch to the matching application. The **Active:** label displays the profile in use. When you focus G13Reborn or an unassigned program, the selected manual profile is used instead.
+
+The app polls the foreground executable about every 300 ms. Associations
+are case-insensitive and are validated to ensure the same executable cannot
+be assigned to multiple profiles. Automatic switching is **off by default**
+when importing an existing profiles.json file.
+
+**Input safety:** When changing profiles, previously simulated keyboard/mouse
+keys are released, vJoy buttons are cleared, and any physically held G13
+buttons are ignored until they are released and pressed again. The analog
+thumbstick continues using the newly active profile's deadzone/inversion.

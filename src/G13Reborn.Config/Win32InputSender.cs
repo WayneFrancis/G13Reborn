@@ -82,25 +82,42 @@ internal static class Win32InputSender
                 "Windows did not accept the simulated input (possibly UIPI/elevation restrictions).");
     }
 
-    /// <summary>Insert one UTF-16 code unit as a down/up Unicode key pair.</summary>
-    public static void SendUnicode(char character)
+    /// <summary>
+    /// Send a complete UTF-16 text chunk as ONE native SendInput call.
+    /// The Windows input queue preserves the ordering of the entire array
+    /// without interspersing other hardware or software keyboard events.
+    /// MacroPlayback limits chunk length, avoiding huge Win32 buffers.
+    /// </summary>
+    public static void SendUnicodeText(string text)
     {
+        ArgumentNullException.ThrowIfNull(text);
+        if (text.Length == 0) return;
+        if (text.Length > 128 + 1)
+            throw new ArgumentOutOfRangeException(nameof(text),
+                "Text playback chunks are limited to 129 UTF-16 code units.");
         if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
             throw new PlatformNotSupportedException("Unicode injection requires 64-bit Windows.");
 
-        Input down = new()
+        var events = new Input[text.Length * 2];
+        for (int i = 0; i < text.Length; i++)
         {
-            Type = InputKeyboard,
-            Keyboard = new KeyInput { Vk = 0, Scan = character, Flags = UnicodeKey }
-        };
-        Input up = new()
-        {
-            Type = InputKeyboard,
-            Keyboard = new KeyInput { Vk = 0, Scan = character, Flags = UnicodeKey | KeyUp }
-        };
-        if (SendInput(2, new[] { down, up }, Marshal.SizeOf<Input>()) != 2)
+            ushort unit = text[i];
+            events[i * 2] = new Input
+            {
+                Type = InputKeyboard,
+                Keyboard = new KeyInput { Scan = unit, Flags = UnicodeKey }
+            };
+            events[i * 2 + 1] = new Input
+            {
+                Type = InputKeyboard,
+                Keyboard = new KeyInput { Scan = unit, Flags = UnicodeKey | KeyUp }
+            };
+        }
+
+        uint inserted = SendInput((uint)events.Length, events, Marshal.SizeOf<Input>());
+        if (inserted != events.Length)
             throw new Win32Exception(Marshal.GetLastWin32Error(),
-                "Windows did not accept Unicode text input.");
+                $"Windows accepted only {inserted} of {events.Length} text input events.");
     }
 
     private static Input Key(ushort vk, bool released) => new()

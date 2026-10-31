@@ -129,3 +129,23 @@ application and, as with all Windows synthetic input, some games or elevated
 applications may ignore it. A macro's own key-down events are released at the
 end, even if a sequence deliberately omits a matching KeyUp. This first
 implementation does not support repeated macros while a key is held.
+
+
+### Text macro reliability and pacing
+
+Text macros are now sent in **atomic Unicode event batches** (up to 128 UTF-16
+units per batch) rather than separate SendInput calls for every character.
+This prevents input from simultaneously pressed G13 keys from interleaving
+between the characters of a short text macro.
+
+**Text delay (ms/char)** in the macro editor defaults to **0** (fast batched
+input). Set it to **10–25 ms** if a specific application cannot reliably
+process fast injected Unicode input. With a nonzero text delay, insertion is
+per-character and can interleave with other normal mapped keys; do not hold
+other keys while testing pacing mode.
+
+This change does not suppress Logitech Gaming Software-generated input or
+change the G13's native keyboard interface. If characters are still duplicated
+while keyboard input is idle, test with LGS disabled and no other macro software
+active. Standard Windows Unicode text injection is most useful for text
+controls (such as Notepad) and is not guaranteed to work in raw-input games.

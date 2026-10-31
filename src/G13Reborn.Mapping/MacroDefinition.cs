@@ -100,11 +100,17 @@ public sealed class MacroDefinition
     public string Name { get; set; } = "New macro";
     public MacroMode Mode { get; set; }
     public string Text { get; set; } = "";
+    /// <summary>
+    /// Delay in milliseconds between text characters. Zero means insert text
+    /// in atomic chunks for best speed and to avoid interleaving with key
+    /// mappings. Nonzero can help applications that cannot accept fast input.
+    /// </summary>
+    public int TextDelayMs { get; set; }
     public List<MacroStep> Steps { get; set; } = new();
 
     public MacroDefinition Clone() => new()
     {
-        Name = Name, Mode = Mode, Text = Text,
+        Name = Name, Mode = Mode, Text = Text, TextDelayMs = TextDelayMs,
         Steps = Steps.Select(s => s.Clone()).ToList()
     };
 
@@ -116,6 +122,8 @@ public sealed class MacroDefinition
             throw new ArgumentException($"Invalid macro mode {Mode}.");
         if (Text is null || Text.Length > 10_000)
             throw new ArgumentException("Macro text cannot exceed 10000 characters.");
+        if (TextDelayMs is < 0 or > 100)
+            throw new ArgumentException("Text delay must be between 0 and 100 milliseconds.");
         if (Steps is null || Steps.Count > 200)
             throw new ArgumentException("Macro steps cannot exceed 200.");
         if (Mode == MacroMode.Text)

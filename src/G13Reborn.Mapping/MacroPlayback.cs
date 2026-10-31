@@ -13,34 +13,60 @@ public static class MacroPlayback
     public static async Task ExecuteAsync(
         MacroDefinition macro,
         Action<InputEvent> emit,
-        Action<char> emitCharacter,
+        Action<string> emitText,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(macro);
         ArgumentNullException.ThrowIfNull(emit);
-        ArgumentNullException.ThrowIfNull(emitCharacter);
+        ArgumentNullException.ThrowIfNull(emitText);
         macro.Validate();
 
         if (macro.Mode == MacroMode.Text)
         {
-            // Preserve newlines as Enter, tabs as Tab. Send ordinary UTF-16
-            // code units through KEYEVENTF_UNICODE (host implementation).
-            for (int i = 0; i < macro.Text.Length; i++)
+            // A SendInput call guarantees the entire event array is inserted
+            // without other keyboard events interspersed. Sending each
+            // character individually let live G-key mappings interrupt text.
+            //
+            // Split at Enter/Tab and every 128 UTF-16 code units to preserve
+            // cancellation for long macros. A short greeting is one atomic
+            // native call. Delay mode intentionally submits one character
+            // at a time for applications that require pacing.
+            const int maxChunk = 128;
+            int index = 0;
+            while (index < macro.Text.Length)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                char ch = macro.Text[i];
-                if (ch == '\r')
+                char next = macro.Text[index];
+                if (next is '\r' or '\n' or '\t')
                 {
-                    if (i + 1 < macro.Text.Length && macro.Text[i + 1] == '\n')
-                        i++;
-                    SendTap(emit, 0x0D);
+                    if (next == '\r' && index + 1 < macro.Text.Length &&
+                        macro.Text[index + 1] == '\n')
+                        index++;
+                    SendTap(emit, next == '\t' ? 0x09 : 0x0D);
+                    index++;
                 }
-                else if (ch == '\n')
-                    SendTap(emit, 0x0D);
-                else if (ch == '\t')
-                    SendTap(emit, 0x09);
                 else
-                    emitCharacter(ch);
+                {
+                    int count = 0;
+                    int max = macro.TextDelayMs > 0 ? 1 : maxChunk;
+                    while (index + count < macro.Text.Length &&
+                           count < max &&
+                           macro.Text[index + count] is not ('\r' or '\n' or '\t'))
+                        count++;
+
+                    // Avoid splitting Unicode surrogate pairs across chunks.
+                    if (count > 0 && index + count < macro.Text.Length &&
+                        char.IsHighSurrogate(macro.Text[index + count - 1]) &&
+                        char.IsLowSurrogate(macro.Text[index + count]))
+                        count++;
+
+                    emitText(macro.Text.Substring(index, count));
+                    index += count;
+                }
+
+                if (macro.TextDelayMs > 0 && index < macro.Text.Length)
+                    await Task.Delay(macro.TextDelayMs, cancellationToken)
+                        .ConfigureAwait(false);
             }
             return;
         }

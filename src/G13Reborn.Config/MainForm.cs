@@ -634,12 +634,15 @@ public sealed class MainForm : Form
                                 !cancellation.IsCancellationRequested)
                                 _output.ApplyMacro(action);
                     },
-                    character =>
+                    text =>
                     {
+                        // One lock + one SendInput array per text chunk.
+                        // G1 keyboard events cannot interleave between
+                        // letters of the same macro text chunk.
                         lock (_gate)
                             if (ReferenceEquals(_macroCancel, cancellation) &&
                                 !cancellation.IsCancellationRequested)
-                                Win32InputSender.SendUnicode(character);
+                                Win32InputSender.SendUnicodeText(text);
                     },
                     cancellation.Token);
             }

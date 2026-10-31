@@ -15,6 +15,10 @@ internal sealed class MacroEditorDialog : Form
     {
         DropDownStyle = ComboBoxStyle.DropDownList, Width = 135
     };
+    private readonly NumericUpDown _textDelay = new()
+    {
+        Minimum = 0, Maximum = 100, Width = 55, Value = 0
+    };
     private readonly TextBox _text = new()
     {
         Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
@@ -96,6 +100,12 @@ internal sealed class MacroEditorDialog : Form
         });
         _mode.Items.AddRange(Enum.GetNames<MacroMode>());
         modeBar.Controls.Add(_mode);
+        modeBar.Controls.Add(new Label
+        {
+            AutoSize = true, Text = "Text delay (ms/char):",
+            Padding = new Padding(10, 7, 4, 0)
+        });
+        modeBar.Controls.Add(_textDelay);
         right.Controls.Add(modeBar, 0, 1);
         right.Controls.Add(new Label
         {
@@ -191,6 +201,8 @@ internal sealed class MacroEditorDialog : Form
             _mode.SelectedItem = index >= 0
                 ? _macros[index].Mode.ToString() : MacroMode.Text.ToString();
             _text.Text = index >= 0 ? _macros[index].Text : "";
+            _textDelay.Value = index >= 0 ? Math.Clamp(
+                _macros[index].TextDelayMs, 0, 100) : 0;
             _steps.Rows.Clear();
             if (index >= 0)
                 foreach (MacroStep step in _macros[index].Steps)
@@ -207,6 +219,7 @@ internal sealed class MacroEditorDialog : Form
         bool active = _loadedIndex >= 0;
         bool isText = _mode.SelectedItem?.ToString() == nameof(MacroMode.Text);
         _text.Enabled = active && isText;
+        _textDelay.Enabled = active && isText;
         _steps.Enabled = active && !isText;
         _addStep.Enabled = _removeStep.Enabled = active && !isText;
     }
@@ -221,6 +234,7 @@ internal sealed class MacroEditorDialog : Form
             macro.Name = _name.Text.Trim();
             macro.Mode = Enum.Parse<MacroMode>(_mode.SelectedItem?.ToString() ?? "Text");
             macro.Text = _text.Text;
+            macro.TextDelayMs = (int)_textDelay.Value;
             macro.Steps.Clear();
 
             foreach (DataGridViewRow row in _steps.Rows)

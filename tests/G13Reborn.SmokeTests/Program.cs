@@ -175,11 +175,13 @@ var textMacro = new MacroDefinition
 };
 textMacro.Validate();
 var textEvents = new List<InputEvent>();
-var textCharacters = new List<char>();
+var textChunks = new List<string>();
 await MacroPlayback.ExecuteAsync(textMacro,
-    textEvents.Add, textCharacters.Add);
-Check(new string(textCharacters.ToArray()) == "Hi!Nextcolumn",
-    "text macro sends characters without keyboard layout translation");
+    textEvents.Add, textChunks.Add);
+Check(string.Concat(textChunks) == "Hi!Nextcolumn",
+    "text macro sends Unicode text without keyboard layout translation");
+Check(textChunks.SequenceEqual(new[] { "Hi!", "Next", "column" }),
+    "text macro sends contiguous words in atomic batches");
 Check(textEvents.SequenceEqual(new[]
 {
     new InputEvent(InputEventKind.KeyDown, 0x0D),
@@ -273,3 +275,36 @@ string encoded = System.Text.Json.JsonSerializer.Serialize(documentWithMacros);
 Check(encoded.Contains("Greeting") && encoded.Contains("Steps"),
     "macro definitions are serialized inside saved profiles");
 Console.WriteLine("Macro validation, playback, cancellation and persistence tests passed.");
+
+
+// Regression: a complete short greeting must be a single atomic SendInput
+// unit rather than a separate native call for each character.
+var greeting = new MacroDefinition
+{
+    Name = "Burst", Mode = MacroMode.Text,
+    Text = "Hello from G13Reborn!!!"
+};
+var greetingChunks = new List<string>();
+await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
+Check(greetingChunks.SequenceEqual(new[] { "Hello from G13Reborn!!!" }),
+    "rapid greeting is delivered as one indivisible text chunk");
+
+// Test explicit pacing separately; don't sleep in this test: 3 chars x 1 ms.
+greeting.Text = "abc";
+greeting.TextDelayMs = 1;
+greetingChunks.Clear();
+await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
+Check(greetingChunks.SequenceEqual(new[] { "a", "b", "c" }),
+    "pacing mode splits text into individual character chunks");
+greeting.TextDelayMs = 0;
+greeting.Text = new string('x', 257);
+greetingChunks.Clear();
+await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
+Check(greetingChunks.Select(x => x.Length).SequenceEqual(new[] { 128, 128, 1 }),
+    "long text splits only at safe bounded SendInput calls");
+greeting.Text = new string('x', 127) + "\ud83d\ude00" + "Z";
+greetingChunks.Clear();
+await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
+Check(greetingChunks.Select(x => x.Length).SequenceEqual(new[] { 129, 1 }) &&
+    string.Concat(greetingChunks) == greeting.Text,
+    "Unicode surrogate pair is never split between chunks");

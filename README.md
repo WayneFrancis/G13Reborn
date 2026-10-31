@@ -149,3 +149,28 @@ change the G13's native keyboard interface. If characters are still duplicated
 while keyboard input is idle, test with LGS disabled and no other macro software
 active. Standard Windows Unicode text injection is most useful for text
 controls (such as Notepad) and is not guaranteed to work in raw-input games.
+
+
+### Text macro reliability (revised)
+
+A prior optimization sent whole text macros in large `SendInput` arrays.
+Although Windows preserves event order, some editors (notably Windows
+Notepad) lost many characters under rapid injection. That optimization has
+been removed.
+
+**Text macros now type at a default pace of 25 ms per character**, each
+character sent as a small Unicode down/up event pair. The **Text delay
+(ms/char)** control accepts 5-100 ms. Profiles saved by the earlier version
+with delay `0` automatically use the safe 25 ms default.
+
+While a text macro is playing, ordinary mapped G-key actions are buffered
+instead of being injected between its characters. On successful completion
+they are replayed in the original order. Stop/release or profile switching
+discards those pending actions, so a cancelled macro does not send stale
+keys to a different application. The macro remains cancellable between
+characters.
+
+If a specific application still drops characters, increase the delay to
+40-60 ms. Text playback is inherently application-dependent; Windows
+`SendInput` success only indicates successful insertion into the input stream,
+not successful handling by the focused text control.

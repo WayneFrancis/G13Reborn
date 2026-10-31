@@ -58,6 +58,7 @@ public sealed class MainForm : Form
     private ButtonTransitionEngine? _engine;
     private MacroTriggerDetector? _macroDetector;
     private readonly InputOutputRouter _output = new();
+    private readonly DeferredMappedInput _deferredNormal = new();
     private CancellationTokenSource? _macroCancel;
     private Task? _macroTask;
     private string? _playingMacro;
@@ -595,7 +596,8 @@ public sealed class MainForm : Form
             if (_nativeOutputEnabled)
             {
                 foreach (var action in _engine.Apply(safeReport))
-                    _output.ApplyNormal(action);
+                    foreach (var allowed in _deferredNormal.Receive(action))
+                        _output.ApplyNormal(allowed);
 
                 // Trigger macros on physical press edges, never on HID
                 // report repetitions. Only one macro runs at a time.
@@ -622,6 +624,9 @@ public sealed class MainForm : Form
         var cancellation = new CancellationTokenSource();
         _macroCancel = cancellation;
         _playingMacro = macro.Name;
+        if (macro.Mode == MacroMode.Text)
+            _deferredNormal.Begin();
+        bool finishedSuccessfully = false;
         _macroTask = Task.Run(async () =>
         {
             try
@@ -645,6 +650,7 @@ public sealed class MainForm : Form
                                 Win32InputSender.SendUnicodeText(text);
                     },
                     cancellation.Token);
+                finishedSuccessfully = true;
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
             catch (Exception ex)
@@ -670,6 +676,20 @@ public sealed class MainForm : Form
                         // held. Release it even after successful completion.
                         try { _output.ReleaseMacro(); }
                         catch { /* best effort if Windows rejects the release */ }
+
+                        // The normal G-key events pressed during text typing
+                        // are replayed only after successful completion.
+                        // On cancel or error, discard them; never replay into
+                        // another foreground application.
+                        IReadOnlyList<InputEvent> deferred =
+                            _deferredNormal.End(finishedSuccessfully &&
+                                !cancellation.IsCancellationRequested);
+                        foreach (InputEvent action in deferred)
+                        {
+                            try { _output.ApplyNormal(action); }
+                            catch { /* macro failure is already handled */ }
+                        }
+
                         _macroCancel = null;
                         _macroTask = null;
                         _playingMacro = null;
@@ -688,6 +708,7 @@ public sealed class MainForm : Form
         _macroTask = null;
         _playingMacro = null;
         cancellation?.Cancel();
+        _deferredNormal.End(replay: false);
         try { _output.ReleaseMacro(); }
         catch { /* best effort: still reset the rest of the output */ }
     }

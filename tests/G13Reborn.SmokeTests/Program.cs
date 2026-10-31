@@ -277,34 +277,56 @@ Check(encoded.Contains("Greeting") && encoded.Contains("Steps"),
 Console.WriteLine("Macro validation, playback, cancellation and persistence tests passed.");
 
 
-// Regression: a complete short greeting must be a single atomic SendInput
-// unit rather than a separate native call for each character.
+// Regression: a short greeting MUST NOT be blasted as one huge SendInput
+// event array; editors such as Notepad have been observed losing characters.
 var greeting = new MacroDefinition
 {
-    Name = "Burst", Mode = MacroMode.Text,
-    Text = "Hello from G13Reborn!!!"
+    Name = "Burst regression", Mode = MacroMode.Text, Text = "Hello from G13Reborn!!!"
 };
 var greetingChunks = new List<string>();
 await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
-Check(greetingChunks.SequenceEqual(new[] { "Hello from G13Reborn!!!" }),
-    "rapid greeting is delivered as one indivisible text chunk");
+Check(string.Concat(greetingChunks) == greeting.Text &&
+      greetingChunks.Count == greeting.Text.Length &&
+      greetingChunks.All(x => x.Length == 1),
+    "text macro emits one character per paced SendInput call");
+Check(greeting.TextDelayMs == 25, "new text macros default to 25 ms pacing");
 
-// Test explicit pacing separately; don't sleep in this test: 3 chars x 1 ms.
-greeting.Text = "abc";
-greeting.TextDelayMs = 1;
-greetingChunks.Clear();
-await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
-Check(greetingChunks.SequenceEqual(new[] { "a", "b", "c" }),
-    "pacing mode splits text into individual character chunks");
+// Legacy macros were serialized without a pacing field, so 0 must still
+// provide safe pacing rather than reverting to the old broken bursts.
 greeting.TextDelayMs = 0;
-greeting.Text = new string('x', 257);
 greetingChunks.Clear();
 await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
-Check(greetingChunks.Select(x => x.Length).SequenceEqual(new[] { 128, 128, 1 }),
-    "long text splits only at safe bounded SendInput calls");
-greeting.Text = new string('x', 127) + "\ud83d\ude00" + "Z";
+Check(greetingChunks.Count == greeting.Text.Length,
+    "legacy zero-delay text macros use paced output");
+greeting.Text = "A\ud83d\ude00B";
 greetingChunks.Clear();
 await MacroPlayback.ExecuteAsync(greeting, _ => { }, greetingChunks.Add);
-Check(greetingChunks.Select(x => x.Length).SequenceEqual(new[] { 129, 1 }) &&
-    string.Concat(greetingChunks) == greeting.Text,
-    "Unicode surrogate pair is never split between chunks");
+Check(greetingChunks.SequenceEqual(new[] { "A", "\ud83d\ude00", "B" }),
+    "Unicode surrogate pair is sent as one paced scalar");
+greeting.Text = "A\r\nB\tC";
+greetingChunks.Clear();
+var greetingKeys = new List<InputEvent>();
+await MacroPlayback.ExecuteAsync(greeting, greetingKeys.Add, greetingChunks.Add);
+Check(string.Concat(greetingChunks) == "ABC" &&
+      greetingKeys.Count == 4,
+    "newlines and tab keys are emitted once each");
+
+// While a text macro runs, normal mapped G-key events must not interrupt
+// its text. Completed macros replay them; cancelled macros discard them.
+var deferred = new DeferredMappedInput();
+var bDown = new InputEvent(InputEventKind.KeyDown, 0x42);
+var bUp = new InputEvent(InputEventKind.KeyUp, 0x42);
+Check(deferred.Receive(bDown).SequenceEqual(new[] { bDown }),
+    "outside a macro ordinary mapped input passes immediately");
+deferred.Begin();
+Check(deferred.Receive(bDown).Count == 0 &&
+      deferred.Receive(bUp).Count == 0,
+    "ordinary mapped keys cannot interrupt paced macro text");
+Check(deferred.End(replay: true).SequenceEqual(new[] { bDown, bUp }),
+    "normal mapped keys replay in original order after macro completes");
+deferred.Begin();
+deferred.Receive(bDown);
+Check(deferred.End(replay: false).Count == 0 &&
+      deferred.Receive(bUp).SequenceEqual(new[] { bUp }),
+    "stop or profile switch discards deferred key actions");
+Console.WriteLine("Paced text and input deferral regression tests passed.");

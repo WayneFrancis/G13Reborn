@@ -17,7 +17,7 @@ internal sealed class MacroEditorDialog : Form
     };
     private readonly NumericUpDown _textDelay = new()
     {
-        Minimum = 0, Maximum = 100, Width = 55, Value = 0
+        Minimum = 5, Maximum = 100, Width = 55, Value = 25
     };
     private readonly TextBox _text = new()
     {
@@ -201,8 +201,10 @@ internal sealed class MacroEditorDialog : Form
             _mode.SelectedItem = index >= 0
                 ? _macros[index].Mode.ToString() : MacroMode.Text.ToString();
             _text.Text = index >= 0 ? _macros[index].Text : "";
-            _textDelay.Value = index >= 0 ? Math.Clamp(
-                _macros[index].TextDelayMs, 0, 100) : 0;
+            _textDelay.Value = index >= 0
+                ? Math.Clamp(_macros[index].TextDelayMs == 0
+                    ? 25 : _macros[index].TextDelayMs, 5, 100)
+                : 25;
             _steps.Rows.Clear();
             if (index >= 0)
                 foreach (MacroStep step in _macros[index].Steps)

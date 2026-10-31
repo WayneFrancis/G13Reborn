@@ -23,50 +23,52 @@ public static class MacroPlayback
 
         if (macro.Mode == MacroMode.Text)
         {
-            // A SendInput call guarantees the entire event array is inserted
-            // without other keyboard events interspersed. Sending each
-            // character individually let live G-key mappings interrupt text.
+            // Win32 SendInput reports that events reached the system queue,
+            // not that the focused editor processed them. Injecting dozens of
+            // key down/up pairs in one call can overwhelm some editors:
+            // Notepad in particular can lose many characters.
             //
-            // Split at Enter/Tab and every 128 UTF-16 code units to preserve
-            // cancellation for long macros. A short greeting is one atomic
-            // native call. Delay mode intentionally submits one character
-            // at a time for applications that require pacing.
-            const int maxChunk = 128;
+            // Send one Unicode scalar at a time, pace by default at 25ms,
+            // and retain cancellation between each character. A serialized
+            // character includes both surrogate code units when needed.
+            int delay = macro.TextDelayMs == 0 ? 25 : macro.TextDelayMs;
             int index = 0;
             while (index < macro.Text.Length)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                char next = macro.Text[index];
-                if (next is '\r' or '\n' or '\t')
+
+                char first = macro.Text[index];
+                string? printable = null;
+                int key = 0;
+                if (first == '\r')
                 {
-                    if (next == '\r' && index + 1 < macro.Text.Length &&
+                    if (index + 1 < macro.Text.Length &&
                         macro.Text[index + 1] == '\n')
                         index++;
-                    SendTap(emit, next == '\t' ? 0x09 : 0x0D);
+                    key = 0x0D;
+                }
+                else if (first == '\n')
+                    key = 0x0D;
+                else if (first == '\t')
+                    key = 0x09;
+                else if (char.IsHighSurrogate(first) &&
+                         index + 1 < macro.Text.Length &&
+                         char.IsLowSurrogate(macro.Text[index + 1]))
+                {
+                    printable = macro.Text.Substring(index, 2);
                     index++;
                 }
                 else
-                {
-                    int count = 0;
-                    int max = macro.TextDelayMs > 0 ? 1 : maxChunk;
-                    while (index + count < macro.Text.Length &&
-                           count < max &&
-                           macro.Text[index + count] is not ('\r' or '\n' or '\t'))
-                        count++;
+                    printable = first.ToString();
 
-                    // Avoid splitting Unicode surrogate pairs across chunks.
-                    if (count > 0 && index + count < macro.Text.Length &&
-                        char.IsHighSurrogate(macro.Text[index + count - 1]) &&
-                        char.IsLowSurrogate(macro.Text[index + count]))
-                        count++;
+                if (printable is not null)
+                    emitText(printable);
+                else
+                    SendTap(emit, key);
 
-                    emitText(macro.Text.Substring(index, count));
-                    index += count;
-                }
-
-                if (macro.TextDelayMs > 0 && index < macro.Text.Length)
-                    await Task.Delay(macro.TextDelayMs, cancellationToken)
-                        .ConfigureAwait(false);
+                index++;
+                if (index < macro.Text.Length)
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
             return;
         }

@@ -124,3 +124,45 @@ ProfileStore.Validate(doc);
 Check(profile.Clone("test copy").Buttons[0].Parameter == "Ctrl+A",
     "profile cloning copies mappings");
 Console.WriteLine("All profile and key/mouse edge tests passed.");
+
+
+// Automatic per-executable profile selection, duplicate rejection and button safety.
+var fallbackProfile = MappingProfile.CreateDefault("Fallback");
+var gameProfile = MappingProfile.CreateDefault("Game");
+gameProfile.ExecutableNames.Add("notepad.exe");
+var autoprofiles = new ProfilesDocument
+{
+    SelectedProfile = "Fallback",
+    AutoSwitchEnabled = true,
+    Profiles = new List<MappingProfile> { fallbackProfile, gameProfile }
+};
+ProfileStore.Validate(autoprofiles);
+Check(ExecutableProfileMatcher.Resolve(autoprofiles, "Fallback", "NOTEPAD.EXE", true).Name == "Game",
+    "matching executable selects game profile regardless of case");
+Check(ExecutableProfileMatcher.Resolve(autoprofiles, "Fallback", "explorer.exe", true).Name == "Fallback",
+    "unmatched executable returns manual fallback");
+Check(ExecutableProfileMatcher.Resolve(autoprofiles, "Fallback", "notepad.exe", false).Name == "Fallback",
+    "automatic matching is opt-in");
+Check(ExecutableProfileMatcher.NormalizeExecutableName("Notepad") == "notepad.exe",
+    "normalizing executable name without extension");
+Check(gameProfile.Clone("Copy").ExecutableNames.SequenceEqual(gameProfile.ExecutableNames),
+    "profile cloning includes executable association");
+bool collisionRejected = false;
+fallbackProfile.ExecutableNames.Add("NOTEPAD.EXE");
+try { ProfileStore.Validate(autoprofiles); }
+catch (ArgumentException) { collisionRejected = true; }
+Check(collisionRejected, "duplicate executable assignments are rejected");
+fallbackProfile.ExecutableNames.Clear();
+
+var heldGate = new ButtonReleaseGate();
+heldGate.BlockCurrentlyHeld(g1g2);
+Check(!heldGate.Filter(g1g2!).IsPhysicalBitPressed(0) &&
+    !heldGate.Filter(g1g2).IsPhysicalBitPressed(1),
+    "held keys suppressed immediately after profile change");
+Check(!heldGate.Filter(g2!).IsPhysicalBitPressed(1),
+    "still-held key remains suppressed even if another key released");
+G13InputReport.TryParse(new byte[] { 1, 127, 127, 0, 0, 0, 0, 0 }, out var emptyReport);
+heldGate.Filter(emptyReport!);
+Check(heldGate.Filter(g2).IsPhysicalBitPressed(1),
+    "previously held key may trigger once physically released and pressed again");
+Console.WriteLine("Automatic profile switching tests passed.");

@@ -16,6 +16,19 @@ public sealed class G13InputReport
     public byte Y { get; }
     public ReadOnlyMemory<byte> ButtonBytes => _buttons;
 
+    /// <summary>Creates a copy with selected physical bits cleared.</summary>
+    public G13InputReport WithoutButtons(IEnumerable<int> physicalBits)
+    {
+        var masked = (byte[])_buttons.Clone();
+        foreach (int bit in physicalBits)
+        {
+            if (bit is < 0 or >= 40)
+                throw new ArgumentOutOfRangeException(nameof(physicalBits));
+            masked[bit / 8] &= unchecked((byte)~(1 << (bit % 8)));
+        }
+        return new G13InputReport(X, Y, masked);
+    }
+
     /// <summary>Read one physical button bit from the five button bytes.</summary>
     public bool IsPhysicalBitPressed(int bit)
     {

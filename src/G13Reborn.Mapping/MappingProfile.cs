@@ -27,6 +27,8 @@ public sealed class MappingProfile
 {
     public string Name { get; set; } = "Default";
     public Dictionary<int, ButtonAction> Buttons { get; set; } = new();
+    /// <summary>Executable file names, e.g. notepad.exe, that activate this profile.</summary>
+    public List<string> ExecutableNames { get; set; } = new();
     public int DeadzonePercent { get; set; } = 10;
     public bool InvertY { get; set; }
 
@@ -57,6 +59,7 @@ public sealed class MappingProfile
             Name = name,
             DeadzonePercent = DeadzonePercent,
             InvertY = InvertY,
+            ExecutableNames = new List<string>(ExecutableNames),
             Buttons = Buttons.ToDictionary(
                 entry => entry.Key,
                 entry => new ButtonAction
@@ -73,6 +76,13 @@ public sealed class MappingProfile
             throw new ArgumentException("Profile name is required.");
         if (DeadzonePercent is < 0 or > 30)
             throw new ArgumentException("Deadzone must be between 0 and 30%.");
+        if (ExecutableNames is null)
+            throw new ArgumentException("Executable associations cannot be null.");
+        var normalizedNames = ExecutableNames
+            .Select(ExecutableProfileMatcher.NormalizeExecutableName).ToList();
+        if (normalizedNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() !=
+            normalizedNames.Count)
+            throw new ArgumentException($"Profile '{Name}' contains duplicate executable names.");
         foreach (var (bit, action) in Buttons)
         {
             if (bit is < 0 or >= 40)
@@ -107,6 +117,7 @@ public sealed class MappingProfile
 public sealed class ProfilesDocument
 {
     public string SelectedProfile { get; set; } = "Default";
+    public bool AutoSwitchEnabled { get; set; }
     public List<MappingProfile> Profiles { get; set; } = new() { MappingProfile.CreateDefault() };
 }
 
@@ -160,6 +171,16 @@ public static class ProfileStore
             throw new ArgumentException("Profile names must be unique.");
         foreach (var profile in document.Profiles)
             profile.Validate();
+        var assigned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var profile in document.Profiles)
+        foreach (string executable in profile.ExecutableNames)
+        {
+            string name = ExecutableProfileMatcher.NormalizeExecutableName(executable);
+            if (assigned.TryGetValue(name, out string? other))
+                throw new ArgumentException(
+                    $"Executable '{name}' is assigned to both '{other}' and '{profile.Name}'.");
+            assigned.Add(name, profile.Name);
+        }
         if (!document.Profiles.Any(p => string.Equals(
             p.Name, document.SelectedProfile, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException("Selected profile does not exist.");

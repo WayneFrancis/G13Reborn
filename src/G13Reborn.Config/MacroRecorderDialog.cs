@@ -90,8 +90,9 @@ internal sealed class MacroRecorderDialog : Form
     };
     private readonly Button _use = new()
     {
-        Text = "Stop and use recording", AutoSize = true
+        Text = "Stop and use recording", AutoSize = true, Enabled = false
     };
+    private DateTime _captureStartsAt;
     private nint _keyboardHook;
     private nint _mouseHook;
     private bool _isRecording;
@@ -151,16 +152,11 @@ internal sealed class MacroRecorderDialog : Form
         _timer.Tick += (_, _) => RefreshStatus();
         Shown += (_, _) =>
         {
-            try { BeginRecording(); }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this,
-                    "Could not install the temporary keyboard/mouse recording hooks.\r\n" +
-                    ex.Message, "Macro recorder",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                DialogResult = DialogResult.Cancel;
-                Close();
-            }
+            // Give time to switch focus to the target application so the
+            // click used to activate it does not become part of the macro.
+            _captureStartsAt = DateTime.UtcNow.AddSeconds(3);
+            _timer.Start();
+            RefreshStatus();
         };
     }
 
@@ -180,12 +176,34 @@ internal sealed class MacroRecorderDialog : Form
 
         _stopwatch.Start();
         _isRecording = true;
-        _timer.Start();
+        _use.Enabled = true;
         RefreshStatus();
     }
 
     private void RefreshStatus()
     {
+        if (!_isRecording && !_ending)
+        {
+            double remaining = (_captureStartsAt - DateTime.UtcNow).TotalSeconds;
+            if (remaining > 0)
+            {
+                _status.Text =
+                    $"Starts in {Math.Ceiling(remaining)} seconds — focus the target application.";
+                return;
+            }
+            try { BeginRecording(); }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this,
+                    "Could not install the temporary recording hooks.\r\n" +
+                    ex.Message, "Macro recorder",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                DialogResult = DialogResult.Cancel;
+                Close();
+                return;
+            }
+        }
+
         _status.Text =
             $"Recording: {_stopwatch.Elapsed.TotalSeconds:F1}s / 60s   " +
             $"Steps: {_session.StepCount} / {MacroRecordingSession.MaximumSteps}";

@@ -32,6 +32,10 @@ internal sealed class MacroEditorDialog : Form
     };
     private readonly Button _addStep = new() { Text = "Add step", AutoSize = true };
     private readonly Button _removeStep = new() { Text = "Remove step", AutoSize = true };
+    private readonly Button _recordSteps = new()
+    {
+        Text = "Record / replace steps...", AutoSize = true
+    };
     private bool _loading;
     private int _loadedIndex = -1;
 
@@ -137,7 +141,10 @@ internal sealed class MacroEditorDialog : Form
         right.Controls.Add(_steps, 0, 4);
 
         var stepButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        stepButtons.Controls.AddRange(new Control[] { _addStep, _removeStep });
+        stepButtons.Controls.AddRange(new Control[]
+        {
+            _addStep, _removeStep, _recordSteps
+        });
         right.Controls.Add(stepButtons, 0, 5);
         right.Controls.Add(new Label
         {
@@ -172,6 +179,7 @@ internal sealed class MacroEditorDialog : Form
             if (_steps.CurrentRow is not null)
                 _steps.Rows.Remove(_steps.CurrentRow);
         };
+        _recordSteps.Click += (_, _) => RecordSteps();
         save.Click += (_, _) => SaveClicked();
 
         RefreshList(_macros.Count > 0 ? 0 : -1);
@@ -224,6 +232,39 @@ internal sealed class MacroEditorDialog : Form
         _textDelay.Enabled = active && isText;
         _steps.Enabled = active && !isText;
         _addStep.Enabled = _removeStep.Enabled = active && !isText;
+        // It is valid to start recording while editing a Text macro.
+        // Accepting converts that macro to Steps, without changing its name.
+        _recordSteps.Enabled = active;
+    }
+
+    private void RecordSteps()
+    {
+        if (_loadedIndex < 0 || !CommitCurrent())
+            return;
+
+        if (_macros[_loadedIndex].Steps.Count > 0 &&
+            MessageBox.Show(this,
+                "Replace the selected macro's existing sequence steps with " +
+                "the new recording?", "Replace sequence",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        using var recorder = new MacroRecorderDialog();
+        if (recorder.ShowDialog(this) != DialogResult.OK ||
+            recorder.RecordedSteps is not { Count: > 0 } recorded)
+            return;
+
+        var macro = _macros[_loadedIndex].Clone();
+        macro.Mode = MacroMode.Steps;
+        macro.Steps = recorded.Select(step => step.Clone()).ToList();
+        macro.Validate();
+        _macros[_loadedIndex] = macro;
+        LoadMacro(_loadedIndex);
+        MessageBox.Show(this,
+            $"Recorded {recorded.Count} steps. You can edit timings or " +
+            "actions in the grid. Use Save macros, then Save profile " +
+            "to persist the recording.",
+            "Recording captured", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private bool CommitCurrent()

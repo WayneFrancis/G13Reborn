@@ -180,8 +180,9 @@ await MacroPlayback.ExecuteAsync(textMacro,
     textEvents.Add, textChunks.Add);
 Check(string.Concat(textChunks) == "Hi!Nextcolumn",
     "text macro sends Unicode text without keyboard layout translation");
-Check(textChunks.SequenceEqual(new[] { "Hi!", "Next", "column" }),
-    "text macro sends contiguous words in atomic batches");
+Check(textChunks.Count == "Hi!Nextcolumn".Length &&
+      textChunks.All(x => x.Length == 1),
+    "text macro emits paced characters rather than flooding one batch");
 Check(textEvents.SequenceEqual(new[]
 {
     new InputEvent(InputEventKind.KeyDown, 0x0D),

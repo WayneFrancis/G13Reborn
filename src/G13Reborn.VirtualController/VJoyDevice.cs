@@ -6,11 +6,25 @@ namespace G13Reborn.VirtualController;
 /// Optional vJoy DirectInput backend. Requires the installed vJoy interface DLL
 /// and its Windows driver. Never installs or modifies either one.
 /// Synchronize Update/Dispose calls externally when used from multiple threads.
+///
+/// The native vJoyInterface.dll creates a hidden window and registers a Win32
+/// window class during InitDll(). Its code does not fully tear that state down
+/// when unloaded, so unloading and reloading it in the same process breaks
+/// subsequent acquisitions. Keep one process-wide DLL reference until exit,
+/// while releasing each acquired vJoy device normally on Dispose().
 /// </summary>
 public sealed class VJoyDevice : IDisposable
 {
     private const uint HidUsageX = 0x30;
     private const uint HidUsageY = 0x31;
+
+    // This handle is intentionally process-lifetime. vJoyInterface creates a
+    // hidden notification window on first initialization, and calling
+    // FreeLibrary between Start/Stop cycles can leave its registered window
+    // class behind. The OS unloads the module at process exit.
+    private static readonly object LibraryGate = new();
+    private static IntPtr s_library;
+
     private readonly uint _id;
     private IntPtr _dll;
     private bool _owned;
@@ -127,17 +141,22 @@ public sealed class VJoyDevice : IDisposable
         if (deviceId is < 1 or > 16)
             throw new ArgumentOutOfRangeException(nameof(deviceId));
 
-        IntPtr dll = LoadInterface();
-        try
+        return new VJoyDevice(GetProcessLibrary(), deviceId);
+    }
+
+    /// <summary>
+    /// Load the native interface once per process, not once per forwarding
+    /// session. Failed loads are not cached, so a later retry remains possible.
+    /// No FreeLibrary is issued: vJoy owns a process-wide hidden notification
+    /// window with no reliable unload/reinitialize mechanism.
+    /// </summary>
+    private static IntPtr GetProcessLibrary()
+    {
+        lock (LibraryGate)
         {
-            // The constructor may acquire the device before a later failure.
-            // Explicitly relinquish it in the catch branch when necessary.
-            return new VJoyDevice(dll, deviceId);
-        }
-        catch
-        {
-            NativeLibrary.Free(dll);
-            throw;
+            if (s_library == IntPtr.Zero)
+                s_library = LoadInterface();
+            return s_library;
         }
     }
 
@@ -231,7 +250,8 @@ public sealed class VJoyDevice : IDisposable
         }
         finally
         {
-            NativeLibrary.Free(_dll);
+            // Mark this managed device session as disposed. The shared native
+            // library stays loaded until the entire G13Reborn process exits.
             _dll = IntPtr.Zero;
         }
     }

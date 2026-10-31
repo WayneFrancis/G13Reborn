@@ -41,6 +41,7 @@ dotnet run --project src\G13Reborn.Config
 - The first version sends keyboard virtual-key events and basic mouse button/wheel events. It does not yet support text macros, key sequences/timings, suppression of Logitech Gaming Software output, application-window targeting, LCD or backlighting.
 - vJoy is a third-party DirectInput virtual joystick; some games accept only XInput. Install the signed upstream driver from https://github.com/BrunnerInnovation/vJoy/releases (do not compile or replace its kernel driver just for this app).
 - The Config and Diagnostics processes should not simultaneously acquire vJoy Device 1. Only one feeder can own it.
+- The native vJoy DLL stays loaded within each G13Reborn process until exit. Clicking **Stop / release** still resets and relinquishes device #1; retaining the DLL avoids a vJoy hidden-window registration failure when **Start forwarding** is pressed again in the same process.
 - Physical button names beyond the G keys/thumb controls have not all been confirmed; the app's mapping list derives from current known report bits. No driver changes are made.
 
 ## Repository projects
@@ -79,3 +80,17 @@ when importing an existing profiles.json file.
 keys are released, vJoy buttons are cleared, and any physically held G13
 buttons are ignored until they are released and pressed again. The analog
 thumbstick continues using the newly active profile's deadzone/inversion.
+
+## vJoy restart regression check
+
+With Device 1 configured in vJoyConf, run G13Reborn.Config with vJoy output
+enabled. Perform **Start forwarding → Stop / release → Start forwarding**
+several times without closing the application. Verify that the G13 stick and
+buttons resume in `joy.cpl` on every cycle. An earlier implementation unloaded
+and reloaded `vJoyInterface.dll` on each cycle, which could leave a native
+registered window class behind and cause vJoy's `RegisterClassEx` and dummy
+window error dialogs. The DLL is now cached per process; the vJoy device is
+still released upon Stop / release and window close.
+
+This vJoy library lifecycle change is a workaround for the existing signed
+driver's userspace interface, not a kernel driver modification.

@@ -15,6 +15,7 @@ public sealed class MainForm : Form
     private readonly Button _addProfile = new() { Text = "New / Clone...", AutoSize = true };
     private readonly Button _deleteProfile = new() { Text = "Delete", AutoSize = true };
     private readonly Button _saveProfile = new() { Text = "Save profile", AutoSize = true };
+    private readonly Button _editMacros = new() { Text = "Edit macros...", AutoSize = true };
     private readonly CheckBox _autoSwitch = new() { Text = "Auto-switch by foreground app", AutoSize = true };
     private readonly TextBox _associatedExecutables = new()
     {
@@ -55,6 +56,11 @@ public sealed class MainForm : Form
     private bool _nativeOutputEnabled;
     private MappingProfile? _activeProfile;
     private ButtonTransitionEngine? _engine;
+    private MacroTriggerDetector? _macroDetector;
+    private readonly InputOutputRouter _output = new();
+    private CancellationTokenSource? _macroCancel;
+    private Task? _macroTask;
+    private string? _playingMacro;
     private readonly ButtonReleaseGate _releaseGate = new();
     private G13InputReport? _lastReport;
     private DateTime _nextForegroundPoll = DateTime.MinValue;
@@ -101,7 +107,8 @@ public sealed class MainForm : Form
         var profileBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         profileBar.Controls.AddRange(new Control[]
         {
-            TextLabel("Profile"), _profiles, _addProfile, _deleteProfile, _saveProfile
+            TextLabel("Profile"), _profiles, _addProfile, _deleteProfile,
+            _saveProfile, _editMacros
         });
         root.Controls.Add(profileBar, 0, 0);
 
@@ -185,6 +192,7 @@ public sealed class MainForm : Form
         _addProfile.Click += (_, _) => CloneProfile();
         _deleteProfile.Click += (_, _) => DeleteProfile();
         _saveProfile.Click += (_, _) => SaveCurrentProfile();
+        _editMacros.Click += (_, _) => EditMacrosClicked();
         _refresh.Click += (_, _) => RefreshDevices();
         _start.Click += (_, _) => StartForwarding();
         _stop.Click += async (_, _) => await StopForwardingAsync();
@@ -270,6 +278,19 @@ public sealed class MainForm : Form
         if (_loading || _running) return;
         _dirty = true;
         _status.Text = $"Profile '{_currentName}' has unsaved changes.";
+    }
+
+    private void EditMacrosClicked()
+    {
+        if (_running) return;
+        using var editor = new MacroEditorDialog(Current().Macros);
+        if (editor.ShowDialog(this) != DialogResult.OK || editor.Result is null)
+            return;
+
+        Current().Macros = editor.Result.Select(m => m.Clone()).ToList();
+        MarkDirty();
+        _status.Text = "Macros edited. Click Save profile to persist changes. " +
+            "Assign a G-key action of Macro and enter its macro name.";
     }
 
     private bool SaveCurrentProfile()
@@ -494,6 +515,7 @@ public sealed class MainForm : Form
             {
                 _activeProfile = profile;
                 _engine = engine;
+                _macroDetector = new MacroTriggerDetector(profile);
                 _lastReport = null;
                 _releaseGate.Clear();
                 _vJoy = vjoy;
@@ -569,10 +591,98 @@ public sealed class MainForm : Form
             if (_nativeOutputEnabled)
             {
                 foreach (var action in _engine.Apply(safeReport))
-                    Win32InputSender.Send(action);
+                    _output.ApplyNormal(action);
+
+                // Trigger macros on physical press edges, never on HID
+                // report repetitions. Only one macro runs at a time.
+                if (_macroDetector is not null)
+                    foreach (string name in _macroDetector.Detect(safeReport))
+                    {
+                        MacroDefinition? macro = _activeProfile.Macros.FirstOrDefault(m =>
+                            string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
+                        if (macro is not null)
+                            TryStartMacroLocked(macro.Clone());
+                    }
             }
             Interlocked.Increment(ref _forwardedReports);
         }
+    }
+
+    private void TryStartMacroLocked(MacroDefinition macro)
+    {
+        // Called under _gate; do not queue overlapping macros. A retrigger
+        // requires a physical release and a fresh press.
+        if (_macroCancel is not null || !_nativeOutputEnabled)
+            return;
+
+        var cancellation = new CancellationTokenSource();
+        _macroCancel = cancellation;
+        _playingMacro = macro.Name;
+        _macroTask = Task.Run(async () =>
+        {
+            try
+            {
+                await MacroPlayback.ExecuteAsync(macro,
+                    action =>
+                    {
+                        lock (_gate)
+                            if (ReferenceEquals(_macroCancel, cancellation) &&
+                                !cancellation.IsCancellationRequested)
+                                _output.ApplyMacro(action);
+                    },
+                    character =>
+                    {
+                        lock (_gate)
+                            if (ReferenceEquals(_macroCancel, cancellation) &&
+                                !cancellation.IsCancellationRequested)
+                                Win32InputSender.SendUnicode(character);
+                    },
+                    cancellation.Token);
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                try
+                {
+                    if (!IsDisposed && IsHandleCreated)
+                        BeginInvoke((MethodInvoker)(() =>
+                        {
+                            if (!IsDisposed)
+                                _status.Text = $"Macro '{macro.Name}' failed: {ex.Message}";
+                        }));
+                }
+                catch (InvalidOperationException) { }
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    if (ReferenceEquals(_macroCancel, cancellation))
+                    {
+                        // A sequence may leave a KeyDown/MouseDown deliberately
+                        // held. Release it even after successful completion.
+                        try { _output.ReleaseMacro(); }
+                        catch { /* best effort if Windows rejects the release */ }
+                        _macroCancel = null;
+                        _macroTask = null;
+                        _playingMacro = null;
+                    }
+                }
+                cancellation.Dispose();
+            }
+        });
+    }
+
+    /// <summary>Must be called under _gate.</summary>
+    private void CancelMacroLocked()
+    {
+        CancellationTokenSource? cancellation = _macroCancel;
+        _macroCancel = null;
+        _macroTask = null;
+        _playingMacro = null;
+        cancellation?.Cancel();
+        try { _output.ReleaseMacro(); }
+        catch { /* best effort: still reset the rest of the output */ }
     }
 
     private async Task StopForwardingAsync()
@@ -584,6 +694,7 @@ public sealed class MainForm : Form
         var cancellation = _cancellation;
         var reader = _reader;
         var readTask = _readTask;
+        lock (_gate) CancelMacroLocked();
         cancellation?.Cancel();
         reader?.Dispose();
         try
@@ -599,13 +710,16 @@ public sealed class MainForm : Form
             {
                 foreach (var command in _engine.ReleaseAll())
                 {
-                    try { Win32InputSender.Send(command); }
+                    try { _output.ApplyNormal(command); }
                     catch { /* best effort on shutdown */ }
                 }
+                try { _output.ReleaseAll(); }
+                catch { /* best effort */ }
             }
             _vJoy?.Dispose();
             _vJoy = null;
             _engine = null;
+            _macroDetector = null;
             _activeProfile = null;
             _reader = null;
             _readTask = null;
@@ -637,13 +751,19 @@ public sealed class MainForm : Form
             }
         }
         string activeName;
-        lock (_gate) activeName = _activeProfile?.Name ?? "(stopped)";
+        string? playingMacro;
+        lock (_gate)
+        {
+            activeName = _activeProfile?.Name ?? "(stopped)";
+            playingMacro = _playingMacro;
+        }
         _activeProfileInfo.Text = "Active: " + activeName;
         _activity.Text =
             $"HID input reports: {Interlocked.Read(ref _inputReports):N0}  |  " +
             $"Processed reports: {Interlocked.Read(ref _forwardedReports):N0}  |  " +
             $"Stick X/Y: {Volatile.Read(ref _lastX)}/{Volatile.Read(ref _lastY)}  |  " +
-            $"Pressed controls: {Volatile.Read(ref _pressedCount)}";
+            $"Pressed controls: {Volatile.Read(ref _pressedCount)}" +
+            (playingMacro is null ? "" : $"  |  Macro: {playingMacro}");
     }
 
     private void SwitchActiveProfile(MappingProfile selected)
@@ -655,15 +775,20 @@ public sealed class MainForm : Form
                     StringComparison.OrdinalIgnoreCase))
                 return;
 
+            // Cancel an in-flight macro before assigning another profile.
+            // The worker checks cancellation under the same _gate, so it
+            // cannot inject another event after this cancellation.
+            CancelMacroLocked();
             // Release old output before accepting any input in the new profile.
             if (_engine is not null && _nativeOutputEnabled)
                 foreach (InputEvent action in _engine.ReleaseAll())
-                    Win32InputSender.Send(action);
+                    _output.ApplyNormal(action);
             _vJoy?.UpdateButtons(0);
 
             _releaseGate.BlockCurrentlyHeld(_lastReport);
             _activeProfile = selected.Clone(selected.Name);
             _engine = new ButtonTransitionEngine(_activeProfile);
+            _macroDetector = new MacroTriggerDetector(_activeProfile);
         }
 
         _status.Text = $"Switched to '{selected.Name}' for " +
@@ -684,6 +809,7 @@ public sealed class MainForm : Form
         _addProfile.Enabled = !_running;
         _deleteProfile.Enabled = !_running && _document.Profiles.Count > 1;
         _saveProfile.Enabled = !_running;
+        _editMacros.Enabled = !_running;
         _autoSwitch.Enabled = !_running;
         _associatedExecutables.Enabled = !_running;
         _devices.Enabled = !_running;
@@ -710,9 +836,13 @@ public sealed class MainForm : Form
             catch { }
             lock (_gate)
             {
+                CancelMacroLocked();
                 if (_engine is not null && _nativeOutputEnabled)
+                {
                     foreach (var action in _engine.ReleaseAll())
-                        try { Win32InputSender.Send(action); } catch { }
+                        try { _output.ApplyNormal(action); } catch { }
+                    try { _output.ReleaseAll(); } catch { }
+                }
                 _vJoy?.Dispose();
                 _vJoy = null;
                 _lastReport = null;

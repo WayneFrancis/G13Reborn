@@ -144,3 +144,35 @@ changes discard queued actions to avoid sending stale keystrokes into a
 different program. This cannot suppress keystrokes generated separately
 by Logitech Gaming Software.
 
+
+
+## Recording a keyboard/mouse sequence
+
+**Macro Editor → New → Record / replace steps...** opens a visible
+time-limited recorder. The recorder provides a **three-second countdown**
+to switch focus to the application you want to record. It captures native
+keyboard down/up events, left/right/middle mouse button transitions, mouse
+wheel movement, and elapsed delay between actions.
+
+Use **Stop and use recording** to accept the captured sequence, or
+**Discard** to throw it away. Only accepted recordings are transferred to
+the step editor, where timing and actions can be modified. Then click
+**Save macros** and **Save profile** to persist changes to JSON.
+
+**Recording is explicitly started**, shows a visible floating window,
+stops after at most 60 seconds or when nearly 200 actions are captured,
+and uninstalls both low-level hooks immediately when stopped. It never
+swallows or modifies the physical input being recorded and ignores other
+software's synthetic input. G13Reborn forwarding must be stopped to edit
+macros, so its own mappings cannot be recursively recorded.
+
+**Scope / limitations:** Motion of the mouse cursor, cursor positions and
+the target application window are **not** recorded; a replayed mouse click
+occurs at the cursor's current position. Recording is system-wide while
+active, so do not type passwords or other sensitive data during recording.
+This first version represents common left/right modifier keys as generic
+Shift/Ctrl/Alt, filters key auto-repeat, and does not capture extra mouse
+buttons or wheel horizontal scrolling.
+
+The recording isn't automatically linked to a G-key. After accepting
+recording, assign the macro by its name in the G-key mapping grid.

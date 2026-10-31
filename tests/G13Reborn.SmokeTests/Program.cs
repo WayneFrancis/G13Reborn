@@ -331,3 +331,88 @@ Check(deferred.End(replay: false).Count == 0 &&
       deferred.Receive(bUp).SequenceEqual(new[] { bUp }),
     "stop or profile switch discards deferred key actions");
 Console.WriteLine("Paced text and input deferral regression tests passed.");
+
+
+// Macro recorder: input transitions, repeat suppression, timing and safety.
+var capture = new MacroRecordingSession();
+Check(capture.RecordKeyboard(0x11, true, 10), "recorder captures Ctrl press");
+Check(!capture.RecordKeyboard(0x11, true, 20),
+    "keyboard auto-repeat is not recorded as a second key-down");
+Check(capture.RecordKeyboard(0x53, true, 120), "recorder captures S press");
+Check(capture.RecordKeyboard(0x53, false, 190), "recorder captures S release");
+Check(capture.RecordKeyboard(0x11, false, 200), "recorder captures Ctrl release");
+Check(capture.RecordMouseButton("Left", true, 270),
+    "recorder captures mouse down");
+Check(capture.RecordMouseButton("Left", false, 300),
+    "recorder captures mouse up");
+Check(capture.RecordWheel(-120, 400), "recorder captures wheel");
+var captureSteps = capture.Finish(410);
+Check(captureSteps.Count == 7, "macro recorder captures seven distinct transitions");
+Check(captureSteps.Select(x => x.Kind).SequenceEqual(new[]
+{
+    MacroStepKind.KeyDown, MacroStepKind.KeyDown, MacroStepKind.KeyUp,
+    MacroStepKind.KeyUp, MacroStepKind.MouseDown, MacroStepKind.MouseUp,
+    MacroStepKind.WheelDown
+}), "recorded steps have correct event order");
+Check(captureSteps.Select(x => x.DelayAfterMs).SequenceEqual(new[]
+{
+    110, 70, 10, 70, 30, 100, 0
+}), "recorder preserves elapsed time between steps");
+Check(!capture.RecordKeyboard(0x41, true, 420),
+    "finished recorder ignores subsequent input");
+Check(capture.Steps.Count == captureSteps.Count,
+    "recorded steps remain available after recording ends");
+
+var unfinished = new MacroRecordingSession();
+Check(unfinished.RecordKeyboard(0x11, true, 1),
+    "unfinished sequence begins with modifier down");
+Check(unfinished.RecordMouseButton("Right", true, 20),
+    "unfinished sequence begins with right mouse down");
+var balanced = unfinished.Finish(50);
+Check(balanced.Select(x => x.Kind).SequenceEqual(new[]
+{
+    MacroStepKind.KeyDown, MacroStepKind.MouseDown,
+    MacroStepKind.KeyUp, MacroStepKind.MouseUp
+}), "stopping recorder balances held modifier and mouse button");
+Check(unfinished.Finish(60).Count == balanced.Count,
+    "recorder Finish is idempotent");
+var earlyClose = new MacroRecordingSession();
+Check(!earlyClose.RecordKeyboard(0x41, true, 61_000),
+    "recorder rejects events after the one-minute recording limit");
+
+var recordedSequence = new MacroDefinition
+{
+    Name = "Recorded Ctrl+S", Mode = MacroMode.Steps,
+    Steps = captureSteps.ToList()
+};
+recordedSequence.Validate();
+var playbackEvents = new List<InputEvent>();
+await MacroPlayback.ExecuteAsync(recordedSequence,
+    playbackEvents.Add, _ => { });
+Check(playbackEvents.Select(x => x.Kind).SequenceEqual(new[]
+{
+    InputEventKind.KeyDown, InputEventKind.KeyDown,
+    InputEventKind.KeyUp, InputEventKind.KeyUp,
+    InputEventKind.MouseDown, InputEventKind.MouseUp, InputEventKind.Wheel
+}), "recorded control sequence is playable");
+
+var cancellingSequence = new MacroDefinition
+{
+    Name = "Cancellation", Mode = MacroMode.Steps,
+    Steps = new List<MacroStep>
+    {
+        new() { Kind = MacroStepKind.Delay, DelayAfterMs = 10_000 },
+        new() { Kind = MacroStepKind.KeyPress, Parameter = "A" }
+    }
+};
+using var cancelMidDelay = new CancellationTokenSource();
+var duringWait = new List<InputEvent>();
+Task cancelledTask = MacroPlayback.ExecuteAsync(cancellingSequence,
+    duringWait.Add, _ => { }, cancelMidDelay.Token);
+cancelMidDelay.Cancel();
+bool stoppedDuringDelay = false;
+try { await cancelledTask; }
+catch (OperationCanceledException) { stoppedDuringDelay = true; }
+Check(stoppedDuringDelay && duringWait.Count == 0,
+    "cancelling during a long delay prevents later input");
+Console.WriteLine("Macro recording and long-sequence cancellation tests passed.");

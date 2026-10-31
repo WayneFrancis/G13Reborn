@@ -250,8 +250,9 @@ internal sealed class MacroEditorDialog : Form
             return;
 
         using var recorder = new MacroRecorderDialog();
-        if (recorder.ShowDialog(this) != DialogResult.OK ||
-            recorder.RecordedSteps is not { Count: > 0 } recorded)
+        var response = recorder.ShowDialog(this);
+        IReadOnlyList<MacroStep>? recorded = recorder.RecordedSteps;
+        if (response != DialogResult.OK || recorded is null || recorded.Count == 0)
             return;
 
         var macro = _macros[_loadedIndex].Clone();

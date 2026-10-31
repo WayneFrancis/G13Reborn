@@ -21,7 +21,9 @@ public sealed class MacroRecordingSession
 
     public int StepCount => _steps.Count;
     public bool IsFinished => _finished;
-    public bool AtLimit => _steps.Count >= MaximumSteps - 12;
+    // Reserve 16 slots to append releases for at most 12 held keys and
+    // three held mouse buttons when a recording reaches its action limit.
+    public bool AtLimit => _steps.Count >= MaximumSteps - 16;
     public IReadOnlyList<MacroStep> Steps => _steps.Select(s => s.Clone()).ToList();
 
     public bool RecordKeyboard(uint virtualKey, bool pressed, long elapsedMs)
@@ -33,6 +35,8 @@ public sealed class MacroRecordingSession
         int key = NormalizeModifiers((int)virtualKey);
         string? name = GetKeyName(key);
         if (name is null) return false;
+        if (pressed && !_heldKeys.Contains(key) && _heldKeys.Count >= 12)
+            return false;
         if (pressed ? !_heldKeys.Add(key) : !_heldKeys.Remove(key))
             return false;
 

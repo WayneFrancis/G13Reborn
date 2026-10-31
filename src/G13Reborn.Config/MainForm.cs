@@ -574,6 +574,10 @@ public sealed class MainForm : Form
 
         lock (_gate)
         {
+            // Stop / release must prevent new input even if one last USB
+            // report arrives before cancellation closes the HID stream.
+            if (!Volatile.Read(ref _running))
+                return;
             _lastReport = report;
             if (_activeProfile is null || _engine is null)
                 return;
@@ -688,7 +692,7 @@ public sealed class MainForm : Form
     private async Task StopForwardingAsync()
     {
         if (!_running) return;
-        _running = false;
+        Volatile.Write(ref _running, false);
         _start.Enabled = false;
         _stop.Enabled = false;
         var cancellation = _cancellation;
@@ -830,6 +834,8 @@ public sealed class MainForm : Form
         _timer.Stop();
         if (_running)
         {
+            Volatile.Write(ref _running, false);
+            lock (_gate) CancelMacroLocked();
             _cancellation?.Cancel();
             _reader?.Dispose();
             try { _readTask?.GetAwaiter().GetResult(); }

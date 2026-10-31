@@ -10,7 +10,7 @@ The physical G13's analog X/Y thumbstick is readable through the existing Window
 
 **G13Reborn.Config** — the new primary configuration application:
 - Edit profiles with names, a per-key action table, 0-30% analog deadzone and Y-axis inversion.
-- Assign any G-key or thumb button to: Disabled (`None`), a **keyboard chord** such as `Ctrl+Shift+F1`, held left/right/middle **mouse button**, single-step wheel up/down, or a **vJoy button 1-32**.
+- Assign any G-key or thumb button to: Disabled (`None`), a **keyboard chord** such as `Ctrl+Shift+F1`, held left/right/middle **mouse button**, single-step wheel up/down, a **vJoy button 1-32**, or a **named macro**.
 - A held physical button holds its keyboard/mouse target down; releasing it releases the corresponding input. Shared modifier keys stay pressed until the last mapped control is released. Mouse-wheel steps trigger only on a new press, not on every HID report.
 - Separate **opt-in** checkboxes for native keyboard/mouse input and vJoy input. When forwarding stops or the G13 disconnects, the application attempts to release all injected keys/buttons and reset the virtual joystick.
 - Create, clone, delete and manually select profiles. Optionally associate executable file names (e.g. `notepad.exe`) with profiles and enable automatic switching based on the foreground application's process name. The selected profile is the fallback whenever no association matches.
@@ -38,7 +38,7 @@ dotnet run --project src\G13Reborn.Config
 
 - **Logitech Gaming Software (LGS) might still emit its original programmed keystrokes.** G13Reborn reads HID input separately but cannot suppress LGS output. Disable/unbind conflicting LGS mappings or close LGS when testing to avoid duplicates.
 - **Keyboard/mouse injection uses Windows `SendInput`**, so it follows standard desktop input focus and Windows integrity/UIPI protections: it generally cannot control elevated applications from a non-elevated process. This is not a kernel-level remapper.
-- The first version sends keyboard virtual-key events and basic mouse button/wheel events. It does not yet support text macros, key sequences/timings, suppression of Logitech Gaming Software output, application-window targeting, LCD or backlighting.
+- Native keyboard/mouse output uses Windows `SendInput`. Macros can type Unicode text, send key/mouse actions and delays; there is no macro recording UI, repeated-while-held behaviour or virtual joystick steps yet. LGS output suppression, window targeting, LCD and backlighting are also not implemented.
 - vJoy is a third-party DirectInput virtual joystick; some games accept only XInput. Install the signed upstream driver from https://github.com/BrunnerInnovation/vJoy/releases (do not compile or replace its kernel driver just for this app).
 - The Config and Diagnostics processes should not simultaneously acquire vJoy Device 1. Only one feeder can own it.
 - The native vJoy DLL stays loaded within each G13Reborn process until exit. Clicking **Stop / release** still resets and relinquishes device #1; retaining the DLL avoids a vJoy hidden-window registration failure when **Start forwarding** is pressed again in the same process.
@@ -94,3 +94,38 @@ still released upon Stop / release and window close.
 
 This vJoy library lifecycle change is a workaround for the existing signed
 driver's userspace interface, not a kernel driver modification.
+
+
+## Text macros and stepped macros
+
+Macros belong to a named profile and are persisted in that profile's
+`%LOCALAPPDATA%G13Rebornprofiles.json`.
+
+1. Stop forwarding. Choose your profile, then click **Edit macros...**.
+2. Click **New**, enter a unique macro name, and select either **Text** or
+   **Steps**.
+3. For Text, enter the text to type; for Steps, add actions with **Add step**.
+   Available sequence actions: `Delay`, `KeyDown`, `KeyUp`,
+   `KeyPress`, `MouseDown`, `MouseUp`, `MouseClick`,
+   `MouseDoubleClick`, `WheelUp`, `WheelDown`. Keyboard actions
+   take one key name (e.g. `Ctrl`, `A`, `F1`), mouse actions use
+   `Left`, `Right`, or `Middle`. Each step can have
+   **Delay after (ms)**, from 0 to 60000.
+4. Click **Save macros**. In the main mapping grid, select **Macro** for
+   the desired G-key and enter the macro's exact name in **Parameter**.
+5. Click **Save profile**. Tick **Enable keyboard/mouse injection**, then
+   **Start forwarding**. For text macros, test in Notepad first.
+
+Only one macro is active at a time. A macro triggers on a fresh button press,
+not on every report while the key is held. Other macro presses while one is
+running are intentionally ignored rather than queued. Stop forwarding or
+switching active application profiles cancels playback and releases any
+macro-held keyboard/mouse buttons. Ordinary mapped keys that remain held are
+protected against being released by macros.
+
+Macro text is inserted through Unicode Windows input events. A newline is sent
+as Enter and a tab as Tab. Text injection goes to the currently focused
+application and, as with all Windows synthetic input, some games or elevated
+applications may ignore it. A macro's own key-down events are released at the
+end, even if a sequence deliberately omits a matching KeyUp. This first
+implementation does not support repeated macros while a key is held.

@@ -166,3 +166,110 @@ heldGate.Filter(emptyReport!);
 Check(heldGate.Filter(g2).IsPhysicalBitPressed(1),
     "previously held key may trigger once physically released and pressed again");
 Console.WriteLine("Automatic profile switching tests passed.");
+
+
+// Macro persistence, validation and deterministic execution without Windows injection.
+var textMacro = new MacroDefinition
+{
+    Name = "Greeting", Mode = MacroMode.Text, Text = "Hi!\r\nNext\tcolumn"
+};
+textMacro.Validate();
+var textEvents = new List<InputEvent>();
+var textCharacters = new List<char>();
+await MacroPlayback.ExecuteAsync(textMacro,
+    textEvents.Add, textCharacters.Add);
+Check(new string(textCharacters.ToArray()) == "Hi!Nextcolumn",
+    "text macro sends characters without keyboard layout translation");
+Check(textEvents.SequenceEqual(new[]
+{
+    new InputEvent(InputEventKind.KeyDown, 0x0D),
+    new InputEvent(InputEventKind.KeyUp, 0x0D),
+    new InputEvent(InputEventKind.KeyDown, 0x09),
+    new InputEvent(InputEventKind.KeyUp, 0x09)
+}), "text macro inserts Enter and Tab events");
+
+var sequence = new MacroDefinition
+{
+    Name = "Test sequence", Mode = MacroMode.Steps,
+    Steps = new()
+    {
+        new() { Kind = MacroStepKind.KeyDown, Parameter = "Ctrl" },
+        new() { Kind = MacroStepKind.Delay, DelayAfterMs = 2 },
+        new() { Kind = MacroStepKind.KeyPress, Parameter = "A" },
+        new() { Kind = MacroStepKind.KeyUp, Parameter = "Ctrl" },
+        new() { Kind = MacroStepKind.MouseClick, Parameter = "Left" },
+        new() { Kind = MacroStepKind.MouseDoubleClick, Parameter = "Right" },
+        new() { Kind = MacroStepKind.WheelDown }
+    }
+};
+sequence.Validate();
+var macroEvents = new List<InputEvent>();
+await MacroPlayback.ExecuteAsync(sequence, macroEvents.Add, _ => { });
+Check(macroEvents.SequenceEqual(new[]
+{
+    new InputEvent(InputEventKind.KeyDown, 0x11),
+    new InputEvent(InputEventKind.KeyDown, 0x41),
+    new InputEvent(InputEventKind.KeyUp, 0x41),
+    new InputEvent(InputEventKind.KeyUp, 0x11),
+    new InputEvent(InputEventKind.MouseDown, (int)MouseControl.Left),
+    new InputEvent(InputEventKind.MouseUp, (int)MouseControl.Left),
+    new InputEvent(InputEventKind.MouseDown, (int)MouseControl.Right),
+    new InputEvent(InputEventKind.MouseUp, (int)MouseControl.Right),
+    new InputEvent(InputEventKind.MouseDown, (int)MouseControl.Right),
+    new InputEvent(InputEventKind.MouseUp, (int)MouseControl.Right),
+    new InputEvent(InputEventKind.Wheel, -120)
+}), "stepped macro emits keys, held modifiers, clicks and scroll in order");
+
+var macroProfile = MappingProfile.CreateDefault("With macros");
+macroProfile.Macros.Add(textMacro);
+macroProfile.Macros.Add(sequence);
+macroProfile.Buttons[0] = new ButtonAction
+{
+    Kind = MappingKind.Macro, Parameter = "Greeting"
+};
+macroProfile.Validate();
+var cloneWithMacros = macroProfile.Clone("Copy of macro profile");
+Check(cloneWithMacros.Macros.Count == 2 &&
+      cloneWithMacros.Macros[0].Text == textMacro.Text,
+    "macros survive profile clone");
+Check(!ReferenceEquals(cloneWithMacros.Macros[0], textMacro),
+    "clones do not share macro definitions");
+var detector = new MacroTriggerDetector(macroProfile);
+Check(detector.Detect(g1!).SequenceEqual(new[] { "Greeting" }),
+    "macro triggers on initial physical press");
+Check(detector.Detect(g1!).Count == 0,
+    "held macro button never retriggers");
+Check(detector.Detect(emptyReport!).Count == 0,
+    "release arms next macro trigger");
+Check(detector.Detect(g1!).SequenceEqual(new[] { "Greeting" }),
+    "macro retriggers after release then press");
+
+bool missingMacroRejected = false;
+macroProfile.Buttons[0].Parameter = "Missing";
+try { macroProfile.Validate(); }
+catch (ArgumentException) { missingMacroRejected = true; }
+Check(missingMacroRejected, "mapping referring to a missing macro is rejected");
+macroProfile.Buttons[0].Parameter = "Greeting";
+
+using var preCancelled = new CancellationTokenSource();
+preCancelled.Cancel();
+bool cancelled = false;
+try
+{
+    await MacroPlayback.ExecuteAsync(sequence,
+        _ => throw new Exception("cancelled macro unexpectedly emitted input"),
+        _ => throw new Exception("cancelled macro emitted text"), preCancelled.Token);
+}
+catch (OperationCanceledException) { cancelled = true; }
+Check(cancelled, "pre-cancelled macro emits no output");
+
+var documentWithMacros = new ProfilesDocument
+{
+    SelectedProfile = macroProfile.Name,
+    Profiles = new() { macroProfile }
+};
+ProfileStore.Validate(documentWithMacros);
+string encoded = System.Text.Json.JsonSerializer.Serialize(documentWithMacros);
+Check(encoded.Contains("Greeting") && encoded.Contains("Steps"),
+    "macro definitions are serialized inside saved profiles");
+Console.WriteLine("Macro validation, playback, cancellation and persistence tests passed.");

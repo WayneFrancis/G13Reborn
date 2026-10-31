@@ -141,6 +141,8 @@ public static class ProfileStore
         try
         {
             File.WriteAllText(temp, JsonSerializer.Serialize(document, JsonOptions));
+            if (File.Exists(FilePath))
+                File.Copy(FilePath, FilePath + ".bak", overwrite: true);
             File.Move(temp, FilePath, overwrite: true);
         }
         finally

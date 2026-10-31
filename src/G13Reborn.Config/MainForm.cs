@@ -534,6 +534,8 @@ public sealed class MainForm : Form
     {
         if (!_running) return;
         _running = false;
+        _start.Enabled = false;
+        _stop.Enabled = false;
         var cancellation = _cancellation;
         var reader = _reader;
         var readTask = _readTask;
@@ -618,7 +620,10 @@ public sealed class MainForm : Form
             _running = false;
         }
         if (!_running && _dirty && !ResolveUnsavedChanges())
+        {
             e.Cancel = true;
+            _timer.Start();
+        }
         base.OnFormClosing(e);
     }
 }

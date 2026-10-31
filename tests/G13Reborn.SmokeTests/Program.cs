@@ -1,5 +1,6 @@
 using G13Reborn.Device;
 using G13Reborn.VirtualController;
+using G13Reborn.Mapping;
 
 static void Check(bool condition, string description)
 {
@@ -58,3 +59,68 @@ Check(stick!.IsPhysicalBitPressed(35), "thumbstick press is physical bit 35");
 Check(map.GetAssignment(35) == 25, "default thumbstick press maps to vJoy button 25");
 Check(map.GetPressedMask(stick, 32) == (1u << 24), "stick click reaches virtual button 25");
 Check(map.GetPressedMask(stick, 24) == 0u, "stick click unavailable if vJoy has only 24 buttons");
+
+
+// Profiles and keyboard/mouse edge events (these do not invoke SendInput).
+var profile = new MappingProfile { Name = "test" };
+profile.Buttons[0] = new ButtonAction { Kind = MappingKind.Keyboard, Parameter = "Ctrl+A" };
+profile.Buttons[1] = new ButtonAction { Kind = MappingKind.Keyboard, Parameter = "Ctrl+B" };
+profile.Buttons[2] = new ButtonAction { Kind = MappingKind.MouseLeft };
+profile.Buttons[3] = new ButtonAction { Kind = MappingKind.WheelDown };
+profile.Buttons[35] = new ButtonAction { Kind = MappingKind.VJoyButton, Parameter = "25" };
+profile.Validate();
+
+var engine = new ButtonTransitionEngine(profile);
+G13InputReport.TryParse(new byte[] { 1, 127, 127, 0b0000_0001, 0, 0, 0, 0 }, out var g1);
+var firstEvents = engine.Apply(g1!);
+Check(firstEvents.SequenceEqual(new[]
+{
+    new InputEvent(InputEventKind.KeyDown, 0x11),
+    new InputEvent(InputEventKind.KeyDown, 0x41)
+}), "Ctrl+A emits modifier before A");
+Check(engine.Apply(g1).Count == 0, "held key does not auto-repeat");
+
+G13InputReport.TryParse(new byte[] { 1, 127, 127, 0b0000_0011, 0, 0, 0, 0 }, out var g1g2);
+Check(engine.Apply(g1g2!).SequenceEqual(
+    new[] { new InputEvent(InputEventKind.KeyDown, 0x42) }),
+    "Ctrl+B shares existing Ctrl without duplicate key-down");
+
+G13InputReport.TryParse(new byte[] { 1, 127, 127, 0b0000_0010, 0, 0, 0, 0 }, out var g2);
+Check(engine.Apply(g2!).SequenceEqual(
+    new[] { new InputEvent(InputEventKind.KeyUp, 0x41) }),
+    "releasing G1 releases A but retains Ctrl and B");
+
+Check(engine.ReleaseAll().SequenceEqual(new[]
+{
+    new InputEvent(InputEventKind.KeyUp, 0x42),
+    new InputEvent(InputEventKind.KeyUp, 0x11)
+}), "shutdown releases main keys before modifiers");
+
+G13InputReport.TryParse(new byte[] { 1, 127, 127, 0b0000_1100, 0, 0, 0, 0 }, out var mouseWheel);
+var mixed = engine.Apply(mouseWheel!);
+Check(mixed.Contains(new InputEvent(InputEventKind.MouseDown, (int)MouseControl.Left)),
+    "mouse down emitted");
+Check(mixed.Contains(new InputEvent(InputEventKind.Wheel, -120)),
+    "wheel down emitted once");
+Check(engine.Apply(mouseWheel!).Count == 0,
+    "held wheel button does not scroll repeatedly");
+Check(engine.ReleaseAll().Contains(new InputEvent(InputEventKind.MouseUp, (int)MouseControl.Left)),
+    "mouse up emitted on shutdown");
+
+Check(profile.GetVirtualButtons(stick!, 32) == 1u << 24,
+    "profile forwards stick click to vJoy button 25");
+
+Check(KeyboardChord.Parse("Alt+Shift+F12").Length == 3,
+    "keyboard chord accepts modifiers and function keys");
+bool invalidChordRejected = false;
+try { KeyboardChord.Parse("Ctrl+Alt"); }
+catch (ArgumentException) { invalidChordRejected = true; }
+Check(invalidChordRejected, "modifier-only mapping rejected");
+
+var doc = new ProfilesDocument();
+doc.Profiles.Add(profile);
+doc.SelectedProfile = profile.Name;
+ProfileStore.Validate(doc);
+Check(profile.Clone("test copy").Buttons[0].Parameter == "Ctrl+A",
+    "profile cloning copies mappings");
+Console.WriteLine("All profile and key/mouse edge tests passed.");

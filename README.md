@@ -37,7 +37,7 @@ The application searches for USB VID 046D / PID C21C. It enumerates HID interfac
 - Logitech Gaming Software or the Windows driver may prevent opening the HID interface. In that case the app reports the Windows error; do not uninstall drivers or use Zadig yet.
 - Some firmware/driver combinations may require a device initialization feature report before streaming input. This milestone deliberately does not send one.
 - The report decoder expects report ID 01 and the 8-byte input layout documented by community drivers; the raw hex log is always retained for investigating variants.
-- A G13 owner has confirmed raw analog X/Y changes, simultaneous G-key reports and **working analog vJoy movement in joy.cpl on Windows 11**. Virtual button mapping still requires hardware testing.
+- A G13 owner has confirmed raw analog X/Y changes, simultaneous G-key reports and **working analog vJoy movement in joy.cpl on Windows 11**. Most vJoy button mappings have also been confirmed. The stick-click report bit and foreground-focus behaviour are under investigation.
 - vJoy is a separately installed optional Windows virtual-joystick driver. G13Reborn locates its native x64 interface DLL at runtime (normally under Program Files\\vJoy\\x64); alternatively set `VJOY_INTERFACE_DLL` to the absolute DLL path.
 - Analog X/Y are always forwarded while vJoy is enabled. G-keys and thumb buttons are forwarded **only** when the opt-in checkbox is enabled. Default assignments use G1-G22 => vJoy buttons 1-22 and three thumb controls => 23-25; the other controls are unassigned. The physical button labels have not all been individually verified on hardware. Duplicate mappings are supported. If vJoy is configured with fewer than 32 buttons, assignments beyond that limit are ignored.
 - The virtual device is reset and released on disconnect or program exit so a held joystick position is not left behind.
@@ -72,3 +72,24 @@ This repository's licence has not yet been selected.
 Use the signed Windows 11 release from the upstream project: https://github.com/BrunnerInnovation/vJoy/releases/tag/v2.2.2.0 . Install the 64-bit driver and configure vJoy device 1 with X and Y axes in vJoyConf. Installing a third-party kernel driver requires administrator approval; it is not necessary for the read-only G13 diagnostic functions.
 
 This app does not copy, bundle or redistribute vJoy files.
+
+## Diagnosing the thumbstick press and foreground focus
+
+The three thumb controls are physical input bits 33, 34 and 35. By default,
+stick depress (bit 35) maps to **vJoy button 25**. Ensure vJoyConf has 25 or
+more buttons enabled (32 recommended), then click **Enable vJoy** again.
+Existing assignments are stored in
+`%LOCALAPPDATA%\G13Reborn\button-mappings.json`, so changing defaults does not
+overwrite your mappings.
+
+The diagnostic window shows (1) raw bit 35 press/release, (2) whether its
+mapped button number is supported by the current vJoy configuration, and
+(3) separate **Input reports received** and **Successful vJoy updates**
+counters with the last X/Y and button mask submitted to vJoy.
+
+These counters increment even when G13Reborn has keyboard focus, provided
+the HID reports are arriving and the vJoy API accepts them. Note that
+`joy.cpl` and some DirectInput applications only poll or repaint while
+their own windows have focus. In that situation vJoy can be receiving
+values normally even if the test indicator looks frozen while another
+window is active. Compare counters with G13Reborn focused and unfocused.

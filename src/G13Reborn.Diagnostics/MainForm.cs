@@ -23,6 +23,8 @@ public sealed class MainForm : Form
     private readonly Label _rawButtons = new();
     private readonly Label _dropped = new();
     private readonly Label _auxButtons = new();
+    private readonly Label _stickClick = new();
+    private readonly Label _forwardingDiagnostic = new();
     private readonly Label _vJoyStatus = new() { AutoSize = true, Text = "vJoy: off.", TextAlign = ContentAlignment.MiddleLeft };
     private readonly Button _startVJoy = new() { Text = "Enable vJoy", AutoSize = true };
     private readonly Button _stopVJoy = new() { Text = "Disable vJoy", AutoSize = true };
@@ -40,6 +42,12 @@ public sealed class MainForm : Form
 
     private int _pendingCount;
     private int _droppedCount;
+    // Background-reader counters: never depend on which window has focus.
+    private long _inputReportCount;
+    private long _successfulVJoyReportCount;
+    private int _lastSentX;
+    private int _lastSentY;
+    private int _lastSentButtonMask;
     private int _deadzonePercent = 10;
     private int _invertYAxis;
     private int _vJoyErrorPending;
@@ -71,7 +79,7 @@ public sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 195));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 236));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(root);
 
@@ -147,20 +155,19 @@ public sealed class MainForm : Form
         _joystick.Dock = DockStyle.Fill;
         monitor.Controls.Add(_joystick, 0, 0);
 
-        var details = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6 };
-        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        var details = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 8 };
+        for (int i = 0; i < 7; i++)
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
         details.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _status.Text = "Not connected.";
         _axes.Text = "Thumbstick X: --    Y: --";
         _buttons.Text = "G-keys: --";
         _auxButtons.Text = "Other buttons: --";
+        _stickClick.Text = "Thumbstick press (raw bit 35): --";
+        _forwardingDiagnostic.Text = "HID reports: 0 | vJoy updates: 0";
         _rawButtons.Text = "Other button bits: --";
         _dropped.Text = "UI queue dropped: 0 (file capture records all reports)";
-        foreach (var label in new[] { _status, _axes, _buttons, _auxButtons, _rawButtons, _dropped })
+        foreach (var label in new[] { _status, _axes, _buttons, _auxButtons, _stickClick, _rawButtons, _forwardingDiagnostic, _dropped })
         {
             label.Dock = DockStyle.Fill;
             label.AutoEllipsis = true;
@@ -292,6 +299,7 @@ public sealed class MainForm : Form
 
     private void ReceiveReport(byte[] bytes)
     {
+        Interlocked.Increment(ref _inputReportCount);
         var sample = new Sample(DateTimeOffset.Now, bytes);
         lock (_captureGate)
         {
@@ -319,6 +327,12 @@ public sealed class MainForm : Form
                             ? Volatile.Read(ref _buttonMappings).GetPressedMask(state, _vJoy.ButtonCount)
                             : 0;
                         _vJoy.UpdateButtons(buttons);
+                        // Both native vJoy calls succeeded. This confirms that
+                        // our feeder ran, not that joy.cpl/game was polling.
+                        Volatile.Write(ref _lastSentX, state.X);
+                        Volatile.Write(ref _lastSentY, state.Y);
+                        Volatile.Write(ref _lastSentButtonMask, unchecked((int)buttons));
+                        Interlocked.Increment(ref _successfulVJoyReportCount);
                     }
                 }
             }
@@ -385,6 +399,23 @@ public sealed class MainForm : Form
                 _auxButtons.Text = "Other buttons: " +
                     (string.Join(", ", state.PressedAuxiliaryKeys) is var aux &&
                      aux.Length > 0 ? aux : "(none)");
+                bool pressed = state.IsPhysicalBitPressed(35);
+                int target = Volatile.Read(ref _buttonMappings).GetAssignment(35);
+                int available;
+                bool enabled;
+                lock (_virtualGate)
+                {
+                    available = _vJoy?.ButtonCount ?? 0;
+                    enabled = _vJoy is not null;
+                }
+                string forwarding = !enabled ? "vJoy off"
+                    : Volatile.Read(ref _forwardButtonReports) == 0 ? "button forwarding off"
+                    : target == 0 ? "unmapped"
+                    : target > available ? $"NOT AVAILABLE ({available} vJoy buttons configured)"
+                    : (unchecked((uint)Volatile.Read(ref _lastSentButtonMask)) &
+                       (1u << (target - 1))) != 0 ? "sent pressed" : "sent released";
+                _stickClick.Text = $"Thumbstick press (bit 35): " +
+                    $"{(pressed ? "DOWN" : "up")} | mapped to vJoy #{target} | {forwarding}";
                 _rawButtons.Text = "Button bytes [3..7]: " +
                     Convert.ToHexString(state.ButtonBytes.Span);
                 _joystick.SetPosition(state.X, state.Y);
@@ -395,6 +426,11 @@ public sealed class MainForm : Form
             }
         }
 
+        _forwardingDiagnostic.Text =
+            $"Input reports received: {Interlocked.Read(ref _inputReportCount):N0} | " +
+            $"Successful vJoy updates: {Interlocked.Read(ref _successfulVJoyReportCount):N0} | " +
+            $"Last sent X/Y: {Volatile.Read(ref _lastSentX)}/{Volatile.Read(ref _lastSentY)} | " +
+            $"Buttons: 0x{unchecked((uint)Volatile.Read(ref _lastSentButtonMask)):X8}";
         _dropped.Text = "UI queue dropped: " + Volatile.Read(ref _droppedCount) +
             " (file capture records all received reports)";
     }
@@ -526,7 +562,11 @@ public sealed class MainForm : Form
             Interlocked.Exchange(ref _vJoyErrorPending, 0);
             int count;
             lock (_virtualGate) count = _vJoy!.ButtonCount;
-            _vJoyStatus.Text = $"vJoy #1: X/Y and {count} available buttons.";
+            int stickButton = Volatile.Read(ref _buttonMappings).GetAssignment(35);
+            _vJoyStatus.Text = $"vJoy #1: X/Y and {count} buttons." +
+                (stickButton > count
+                    ? $" Stick-click mapping #{stickButton} unavailable!"
+                    : "");
         }
         catch (Exception ex)
         {

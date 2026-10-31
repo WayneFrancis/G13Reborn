@@ -50,3 +50,11 @@ var thumbButtons = new byte[] { 1, 127, 127, 0, 0, 0, 0, 0b0000_1110 };
 G13InputReport.TryParse(thumbButtons, out var thumb);
 Check(map.GetPressedMask(thumb!, 32) == ((1u << 22) | (1u << 23) | (1u << 24)),
     "three thumb controls map to buttons 23-25");
+
+var stickOnly = new byte[] { 1, 127, 127, 0, 0, 0, 0, 0b0000_1000 };
+Check(G13InputReport.TryParse(stickOnly, out var stick) && stick is not null,
+    "stick depress packet parses");
+Check(stick!.IsPhysicalBitPressed(35), "thumbstick press is physical bit 35");
+Check(map.GetAssignment(35) == 25, "default thumbstick press maps to vJoy button 25");
+Check(map.GetPressedMask(stick, 32) == (1u << 24), "stick click reaches virtual button 25");
+Check(map.GetPressedMask(stick, 24) == 0u, "stick click unavailable if vJoy has only 24 buttons");

@@ -13,6 +13,7 @@ internal static class Win32InputSender
     private const uint InputMouse = 0;
     private const uint InputKeyboard = 1;
     private const uint KeyUp = 0x0002;
+    private const uint UnicodeKey = 0x0004;
     private const uint ExtendedKey = 0x0001;
     private const uint MouseLeftDown = 0x0002;
     private const uint MouseLeftUp = 0x0004;
@@ -79,6 +80,27 @@ internal static class Win32InputSender
         if (SendInput(1, inputs, Marshal.SizeOf<Input>()) != 1)
             throw new Win32Exception(Marshal.GetLastWin32Error(),
                 "Windows did not accept the simulated input (possibly UIPI/elevation restrictions).");
+    }
+
+    /// <summary>Insert one UTF-16 code unit as a down/up Unicode key pair.</summary>
+    public static void SendUnicode(char character)
+    {
+        if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
+            throw new PlatformNotSupportedException("Unicode injection requires 64-bit Windows.");
+
+        Input down = new()
+        {
+            Type = InputKeyboard,
+            Keyboard = new KeyInput { Vk = 0, Scan = character, Flags = UnicodeKey }
+        };
+        Input up = new()
+        {
+            Type = InputKeyboard,
+            Keyboard = new KeyInput { Vk = 0, Scan = character, Flags = UnicodeKey | KeyUp }
+        };
+        if (SendInput(2, new[] { down, up }, Marshal.SizeOf<Input>()) != 2)
+            throw new Win32Exception(Marshal.GetLastWin32Error(),
+                "Windows did not accept Unicode text input.");
     }
 
     private static Input Key(ushort vk, bool released) => new()

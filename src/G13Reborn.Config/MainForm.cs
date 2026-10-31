@@ -1,0 +1,624 @@
+using G13Reborn.Device;
+using G13Reborn.Device.Hid;
+using G13Reborn.Mapping;
+using G13Reborn.VirtualController;
+
+namespace G13Reborn.Config;
+
+/// <summary>
+/// G13 configuration and opt-in input forwarding. The diagnostics app remains
+/// separate for protocol capture and troubleshooting.
+/// </summary>
+public sealed class MainForm : Form
+{
+    private readonly ComboBox _profiles = new() { Width = 190, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Button _addProfile = new() { Text = "New / Clone...", AutoSize = true };
+    private readonly Button _deleteProfile = new() { Text = "Delete", AutoSize = true };
+    private readonly Button _saveProfile = new() { Text = "Save profile", AutoSize = true };
+    private readonly ComboBox _devices = new() { Width = 330, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Button _refresh = new() { Text = "Refresh", AutoSize = true };
+    private readonly Button _start = new() { Text = "Start forwarding", AutoSize = true };
+    private readonly Button _stop = new() { Text = "Stop / release", AutoSize = true };
+    private readonly CheckBox _keyboardMouse = new()
+    {
+        Text = "Enable keyboard/mouse injection", AutoSize = true
+    };
+    private readonly CheckBox _vJoyEnabled = new()
+    {
+        Text = "Enable vJoy X/Y and buttons", AutoSize = true, Checked = true
+    };
+    private readonly NumericUpDown _deadzone = new()
+    {
+        Minimum = 0, Maximum = 30, Value = 10, Width = 48
+    };
+    private readonly CheckBox _invertY = new() { Text = "Invert Y", AutoSize = true };
+    private readonly DataGridView _grid = new();
+    private readonly Label _status = new() { AutoSize = true, Text = "Stopped." };
+    private readonly Label _activity = new() { AutoSize = true, Text = "No input yet." };
+    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 100 };
+    private readonly object _gate = new();
+
+    private ProfilesDocument _document = new();
+    private string _currentName = "Default";
+    private bool _loading;
+    private bool _dirty;
+    private bool _running;
+    private bool _nativeOutputEnabled;
+    private MappingProfile? _activeProfile;
+    private ButtonTransitionEngine? _engine;
+    private G13InputReader? _reader;
+    private VJoyDevice? _vJoy;
+    private CancellationTokenSource? _cancellation;
+    private Task? _readTask;
+    private long _inputReports;
+    private long _forwardedReports;
+    private int _lastX;
+    private int _lastY;
+    private int _pressedCount;
+
+    private sealed record DeviceChoice(G13DeviceInfo Info)
+    {
+        public override string ToString() =>
+            $"G13 input {Info.InputReportLength} bytes — " +
+            (Info.Path.Length > 34 ? Info.Path[^34..] : Info.Path);
+    }
+
+    public MainForm()
+    {
+        Text = "G13Reborn — Profiles & Input Mapping";
+        Size = new Size(1050, 800);
+        MinimumSize = new Size(880, 600);
+        StartPosition = FormStartPosition.CenterScreen;
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 5,
+            Padding = new Padding(12)
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        Controls.Add(root);
+
+        var profileBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        profileBar.Controls.AddRange(new Control[]
+        {
+            TextLabel("Profile"), _profiles, _addProfile, _deleteProfile, _saveProfile
+        });
+        root.Controls.Add(profileBar, 0, 0);
+
+        var deviceBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        deviceBar.Controls.AddRange(new Control[]
+        {
+            TextLabel("G13 HID"), _devices, _refresh, _start, _stop
+        });
+        root.Controls.Add(deviceBar, 0, 1);
+
+        var optionsBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        optionsBar.Controls.AddRange(new Control[]
+        {
+            _vJoyEnabled, _keyboardMouse, TextLabel("Deadzone %"), _deadzone, _invertY
+        });
+        root.Controls.Add(optionsBar, 0, 2);
+
+        _grid.Dock = DockStyle.Fill;
+        _grid.AllowUserToAddRows = false;
+        _grid.AllowUserToDeleteRows = false;
+        _grid.AllowUserToResizeRows = false;
+        _grid.RowHeadersVisible = false;
+        _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _grid.EditMode = DataGridViewEditMode.EditOnEnter;
+        _grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Physical", HeaderText = "Physical G13 control",
+            ReadOnly = true, FillWeight = 45
+        });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Bit", HeaderText = "HID bit", ReadOnly = true, FillWeight = 17
+        });
+        var actions = new DataGridViewComboBoxColumn
+        {
+            Name = "Kind", HeaderText = "Output action",
+            FlatStyle = FlatStyle.Flat, FillWeight = 42
+        };
+        foreach (string kind in Enum.GetNames<MappingKind>())
+            actions.Items.Add(kind);
+        _grid.Columns.Add(actions);
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Parameter", HeaderText = "Key chord or vJoy button #",
+            FillWeight = 72
+        });
+        _grid.CurrentCellDirtyStateChanged += (_, _) =>
+        {
+            if (_grid.IsCurrentCellDirty)
+                _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+        };
+        _grid.CellValueChanged += (_, _) => MarkDirty();
+        _grid.DataError += (_, e) =>
+        {
+            e.ThrowException = false;
+            _status.Text = "Invalid cell value: " + e.Exception?.Message;
+        };
+        root.Controls.Add(_grid, 0, 3);
+
+        var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
+        bottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        bottom.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _status.Dock = DockStyle.Fill;
+        _activity.Dock = DockStyle.Fill;
+        bottom.Controls.Add(_status, 0, 0);
+        bottom.Controls.Add(_activity, 0, 1);
+        root.Controls.Add(bottom, 0, 4);
+
+        _profiles.SelectionChangeCommitted += (_, _) => ProfileSelected();
+        _addProfile.Click += (_, _) => CloneProfile();
+        _deleteProfile.Click += (_, _) => DeleteProfile();
+        _saveProfile.Click += (_, _) => SaveCurrentProfile();
+        _refresh.Click += (_, _) => RefreshDevices();
+        _start.Click += (_, _) => StartForwarding();
+        _stop.Click += async (_, _) => await StopForwardingAsync();
+        _deadzone.ValueChanged += (_, _) => MarkDirty();
+        _invertY.CheckedChanged += (_, _) => MarkDirty();
+
+        try
+        {
+            _document = ProfileStore.Load();
+        }
+        catch (Exception ex)
+        {
+            _document = new ProfilesDocument();
+            MessageBox.Show(this,
+                "Failed to load profiles. In-memory defaults will be used.\r\n" +
+                "The existing profile file has not been overwritten.\r\n\r\n" + ex.Message,
+                "G13Reborn profiles", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        _currentName = _document.SelectedProfile;
+        UpdateProfileList();
+        LoadProfile(_currentName);
+        RefreshDevices();
+        UpdateControlState();
+        _timer.Tick += (_, _) => RefreshStatus();
+        _timer.Start();
+    }
+
+    private static Label TextLabel(string text) => new()
+    {
+        Text = text, AutoSize = true, Padding = new Padding(4, 7, 4, 0)
+    };
+
+    private MappingProfile Current() =>
+        _document.Profiles.Single(p => string.Equals(
+            p.Name, _currentName, StringComparison.OrdinalIgnoreCase));
+
+    private void UpdateProfileList()
+    {
+        _loading = true;
+        try
+        {
+            _profiles.Items.Clear();
+            foreach (var p in _document.Profiles.OrderBy(p => p.Name))
+                _profiles.Items.Add(p.Name);
+            _profiles.SelectedItem = _currentName;
+        }
+        finally { _loading = false; }
+    }
+
+    private void LoadProfile(string name)
+    {
+        _loading = true;
+        try
+        {
+            _currentName = name;
+            var profile = Current();
+            _profiles.SelectedItem = profile.Name;
+            _deadzone.Value = profile.DeadzonePercent;
+            _invertY.Checked = profile.InvertY;
+            _grid.Rows.Clear();
+
+            foreach (var button in G13ButtonMappings.PhysicalButtons)
+            {
+                var mapping = profile.Buttons.GetValueOrDefault(button.Bit) ??
+                    new ButtonAction { Kind = MappingKind.None };
+                int index = _grid.Rows.Add(
+                    button.Name, button.Bit, mapping.Kind.ToString(), mapping.Parameter);
+                _grid.Rows[index].Tag = button.Bit;
+            }
+            _dirty = false;
+            _status.Text = $"Profile '{profile.Name}' loaded. Input output is stopped.";
+            UpdateControlState();
+        }
+        finally { _loading = false; }
+    }
+
+    private void MarkDirty()
+    {
+        if (_loading || _running) return;
+        _dirty = true;
+        _status.Text = $"Profile '{_currentName}' has unsaved changes.";
+    }
+
+    private bool SaveCurrentProfile()
+    {
+        if (_running) return false;
+        try
+        {
+            _grid.EndEdit();
+            var replacement = Current().Clone(_currentName);
+            replacement.DeadzonePercent = (int)_deadzone.Value;
+            replacement.InvertY = _invertY.Checked;
+            replacement.Buttons.Clear();
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                int bit = (int)row.Tag!;
+                string kindString = row.Cells["Kind"].Value?.ToString() ?? "None";
+                MappingKind kind = Enum.Parse<MappingKind>(kindString);
+                string parameter = row.Cells["Parameter"].Value?.ToString()?.Trim() ?? "";
+                replacement.Buttons[bit] = new ButtonAction
+                {
+                    Kind = kind, Parameter = parameter
+                };
+            }
+            replacement.Validate();
+
+            int index = _document.Profiles.FindIndex(p => string.Equals(
+                p.Name, _currentName, StringComparison.OrdinalIgnoreCase));
+            var previous = _document.Profiles[index];
+            _document.Profiles[index] = replacement;
+            _document.SelectedProfile = _currentName;
+            try { ProfileStore.Save(_document); }
+            catch
+            {
+                _document.Profiles[index] = previous;
+                throw;
+            }
+            _dirty = false;
+            _status.Text = $"Saved '{_currentName}' to {ProfileStore.FilePath}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Could not save profile",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+    }
+
+    private bool ResolveUnsavedChanges()
+    {
+        if (!_dirty) return true;
+        var response = MessageBox.Show(this,
+            $"Save changes to '{_currentName}'?", "Unsaved profile",
+            MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        if (response == DialogResult.Cancel) return false;
+        if (response == DialogResult.Yes) return SaveCurrentProfile();
+        return true;
+    }
+
+    private void ProfileSelected()
+    {
+        if (_loading) return;
+        string next = _profiles.SelectedItem?.ToString() ?? _currentName;
+        if (_running || !ResolveUnsavedChanges())
+        {
+            _profiles.SelectedItem = _currentName;
+            return;
+        }
+        if (next == _currentName) return;
+        _document.SelectedProfile = next;
+        try
+        {
+            ProfileStore.Save(_document);
+            LoadProfile(next);
+        }
+        catch (Exception ex)
+        {
+            _document.SelectedProfile = _currentName;
+            _profiles.SelectedItem = _currentName;
+            MessageBox.Show(this, ex.Message, "Could not select profile");
+        }
+    }
+
+    private void CloneProfile()
+    {
+        if (_running || !ResolveUnsavedChanges()) return;
+        string? name = AskForName();
+        if (name is null) return;
+        if (string.IsNullOrWhiteSpace(name) ||
+            _document.Profiles.Any(p => string.Equals(p.Name, name,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show(this, "Enter a unique profile name.", "Invalid name");
+            return;
+        }
+
+        var clone = Current().Clone(name.Trim());
+        _document.Profiles.Add(clone);
+        _document.SelectedProfile = clone.Name;
+        try
+        {
+            ProfileStore.Save(_document);
+            _currentName = clone.Name;
+            UpdateProfileList();
+            LoadProfile(_currentName);
+        }
+        catch (Exception ex)
+        {
+            _document.Profiles.Remove(clone);
+            _document.SelectedProfile = _currentName;
+            MessageBox.Show(this, ex.Message, "Could not create profile");
+        }
+    }
+
+    private void DeleteProfile()
+    {
+        if (_running || _document.Profiles.Count <= 1) return;
+        if (MessageBox.Show(this, $"Delete profile '{_currentName}'?",
+            "Delete profile", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) !=
+            DialogResult.Yes) return;
+        var old = Current();
+        _document.Profiles.Remove(old);
+        _document.SelectedProfile = _document.Profiles[0].Name;
+        try
+        {
+            ProfileStore.Save(_document);
+            _currentName = _document.SelectedProfile;
+            UpdateProfileList();
+            LoadProfile(_currentName);
+        }
+        catch (Exception ex)
+        {
+            _document.Profiles.Add(old);
+            _document.SelectedProfile = old.Name;
+            MessageBox.Show(this, ex.Message, "Could not delete profile");
+        }
+    }
+
+    private string? AskForName()
+    {
+        using var dialog = new Form
+        {
+            Text = "New profile", StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            ClientSize = new Size(400, 116), MaximizeBox = false, MinimizeBox = false
+        };
+        var name = new TextBox { Left = 14, Top = 15, Width = 369, Text = _currentName + " copy" };
+        var ok = new Button
+        {
+            Text = "Create", Left = 205, Top = 61, Width = 83,
+            DialogResult = DialogResult.OK
+        };
+        var cancel = new Button
+        {
+            Text = "Cancel", Left = 296, Top = 61, Width = 83,
+            DialogResult = DialogResult.Cancel
+        };
+        dialog.Controls.AddRange(new Control[] { name, ok, cancel });
+        dialog.AcceptButton = ok;
+        dialog.CancelButton = cancel;
+        return dialog.ShowDialog(this) == DialogResult.OK ? name.Text : null;
+    }
+
+    private void RefreshDevices()
+    {
+        if (_running) return;
+        try
+        {
+            _devices.Items.Clear();
+            foreach (var device in G13DeviceDiscovery.Enumerate()
+                .Where(i => i.InputReportLength > 0))
+                _devices.Items.Add(new DeviceChoice(device));
+            if (_devices.Items.Count > 0) _devices.SelectedIndex = 0;
+            _status.Text = _devices.Items.Count == 0
+                ? "No readable G13 HID interface detected."
+                : "G13 interface detected. Select outputs and click Start forwarding.";
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "G13 enumeration failed: " + ex.Message;
+        }
+        UpdateControlState();
+    }
+
+    private void StartForwarding()
+    {
+        if (_running) return;
+        if (_devices.SelectedItem is not DeviceChoice device)
+        {
+            MessageBox.Show(this, "Select a G13 HID interface.");
+            return;
+        }
+        if (!_vJoyEnabled.Checked && !_keyboardMouse.Checked)
+        {
+            MessageBox.Show(this, "Enable at least one output type.");
+            return;
+        }
+        if (!SaveCurrentProfile()) return;
+
+        try
+        {
+            var profile = Current().Clone(Current().Name);
+            var engine = new ButtonTransitionEngine(profile);
+            // Open vJoy first, so a driver failure never starts keyboard injection.
+            VJoyDevice? vjoy = _vJoyEnabled.Checked ? VJoyDevice.Open(1) : null;
+            G13InputReader reader;
+            try { reader = G13InputReader.Open(device.Info); }
+            catch { vjoy?.Dispose(); throw; }
+
+            var cancellation = new CancellationTokenSource();
+            lock (_gate)
+            {
+                _activeProfile = profile;
+                _engine = engine;
+                _vJoy = vjoy;
+                _reader = reader;
+                _nativeOutputEnabled = _keyboardMouse.Checked;
+                _cancellation = cancellation;
+            }
+            _running = true;
+            _readTask = Task.Run(() => RunReaderAsync(reader, cancellation.Token));
+            _status.Text = "Running: " + profile.Name +
+                " — press Stop / release before modifying profiles.";
+            UpdateControlState();
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "Could not start: " + ex.Message;
+            MessageBox.Show(this, ex.Message, "Could not start forwarding",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private async Task RunReaderAsync(G13InputReader reader, CancellationToken token)
+    {
+        try
+        {
+            await reader.ReadAsync(ProcessReport, token);
+        }
+        catch (Exception) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            try
+            {
+                BeginInvoke((MethodInvoker)(async () =>
+                {
+                    if (IsDisposed) return;
+                    await StopForwardingAsync();
+                    _status.Text = "Forwarding stopped: " + ex.Message;
+                }));
+            }
+            catch (InvalidOperationException) { }
+        }
+    }
+
+    private void ProcessReport(byte[] bytes)
+    {
+        if (!G13InputReport.TryParse(bytes, out var report) || report is null)
+            return;
+
+        Interlocked.Increment(ref _inputReports);
+        Volatile.Write(ref _lastX, report.X);
+        Volatile.Write(ref _lastY, report.Y);
+        int count = report.PressedGKeys.Count() + report.PressedAuxiliaryKeys.Count();
+        Volatile.Write(ref _pressedCount, count);
+
+        lock (_gate)
+        {
+            if (_activeProfile is null || _engine is null)
+                return;
+            if (_vJoy is not null)
+            {
+                _vJoy.Update(
+                    report.X, report.Y, _activeProfile.DeadzonePercent / 100.0,
+                    _activeProfile.InvertY);
+                _vJoy.UpdateButtons(_activeProfile.GetVirtualButtons(
+                    report, _vJoy.ButtonCount));
+            }
+            if (_nativeOutputEnabled)
+            {
+                foreach (var action in _engine.Apply(report))
+                    Win32InputSender.Send(action);
+            }
+            Interlocked.Increment(ref _forwardedReports);
+        }
+    }
+
+    private async Task StopForwardingAsync()
+    {
+        if (!_running) return;
+        _running = false;
+        var cancellation = _cancellation;
+        var reader = _reader;
+        var readTask = _readTask;
+        cancellation?.Cancel();
+        reader?.Dispose();
+        try
+        {
+            if (readTask is not null)
+                await readTask;
+        }
+        catch (Exception) { /* stopping / input errors are handled by the reader */ }
+        cancellation?.Dispose();
+        lock (_gate)
+        {
+            if (_engine is not null && _nativeOutputEnabled)
+            {
+                foreach (var command in _engine.ReleaseAll())
+                {
+                    try { Win32InputSender.Send(command); }
+                    catch { /* best effort on shutdown */ }
+                }
+            }
+            _vJoy?.Dispose();
+            _vJoy = null;
+            _engine = null;
+            _activeProfile = null;
+            _reader = null;
+            _readTask = null;
+            _cancellation = null;
+            _nativeOutputEnabled = false;
+        }
+        _status.Text = "Stopped. All injected keys/buttons released.";
+        UpdateControlState();
+    }
+
+    private void RefreshStatus()
+    {
+        _activity.Text =
+            $"HID input reports: {Interlocked.Read(ref _inputReports):N0}  |  " +
+            $"Processed reports: {Interlocked.Read(ref _forwardedReports):N0}  |  " +
+            $"Stick X/Y: {Volatile.Read(ref _lastX)}/{Volatile.Read(ref _lastY)}  |  " +
+            $"Pressed controls: {Volatile.Read(ref _pressedCount)}";
+    }
+
+    private void UpdateControlState()
+    {
+        _profiles.Enabled = !_running;
+        _addProfile.Enabled = !_running;
+        _deleteProfile.Enabled = !_running && _document.Profiles.Count > 1;
+        _saveProfile.Enabled = !_running;
+        _devices.Enabled = !_running;
+        _refresh.Enabled = !_running;
+        _keyboardMouse.Enabled = !_running;
+        _vJoyEnabled.Enabled = !_running;
+        _deadzone.Enabled = !_running;
+        _invertY.Enabled = !_running;
+        _grid.ReadOnly = _running;
+        _start.Enabled = !_running && _devices.SelectedItem is not null;
+        _stop.Enabled = _running;
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        // Don't leave the feeder holding key/mouse inputs after a window close.
+        // Stop synchronously on shutdown; cancellation/dispose breaks ReadAsync.
+        _timer.Stop();
+        if (_running)
+        {
+            _cancellation?.Cancel();
+            _reader?.Dispose();
+            try { _readTask?.GetAwaiter().GetResult(); }
+            catch { }
+            lock (_gate)
+            {
+                if (_engine is not null && _nativeOutputEnabled)
+                    foreach (var action in _engine.ReleaseAll())
+                        try { Win32InputSender.Send(action); } catch { }
+                _vJoy?.Dispose();
+                _vJoy = null;
+            }
+            _cancellation?.Dispose();
+            _running = false;
+        }
+        if (!_running && _dirty && !ResolveUnsavedChanges())
+            e.Cancel = true;
+        base.OnFormClosing(e);
+    }
+}

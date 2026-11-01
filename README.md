@@ -490,3 +490,32 @@ Both options use the previously tested G13 HID output reports and are
 opt-in to avoid interfering with Logitech Gaming Software or an LCD
 applet. Settings are host-side profile preferences; they are not writes
 to the G13's persistent onboard memory.
+
+
+## M1/M2/M3 mapping layers
+
+Each G13Reborn profile now has an **Enable M1/M2/M3 layers** checkbox
+(default off for all previously saved profiles). When enabled, use
+**Edit mapping layer: M1 / M2 / M3** above the mapping grid to assign
+different G-key keyboard, mouse, vJoy and macro outputs for each layer.
+The M1 mapping is the existing profile mapping. The first time layers
+are enabled, M2 and M3 start as copies of M1 to preserve familiar
+assignments. Subsequent changes to M2/M3 are independent and persist
+with **Save profile**. Clone profile deep-copies all three layers.
+
+During forwarding, physical M1/M2/M3 button presses select the
+corresponding mapping layer; releases do not switch layers. In this
+mode, M1/M2/M3 are reserved and cannot themselves be bound to a
+key/mouse/vJoy output. On switching, the previous mapping releases all
+held keyboard/mouse/vJoy buttons and cancels any active/looping macro.
+Any other G-key already held during switching must be physically
+released before it can trigger its new-layer mapping. The G13's
+M1/M2/M3 indicator LEDs track the selected layer, using the confirmed
+0x05 feature report and preserving MR state when readback is available.
+
+Switching foreground-application profiles resets the layer to M1
+and prevents held M keys from activating layers until released.
+Profiles with this feature off retain their existing M-key behaviour
+and mapping data. The LCD active-profile line displays M1/M2/M3
+while the feature is enabled. This is host-side layer selection and
+does not write layer mappings to the G13's onboard memory.

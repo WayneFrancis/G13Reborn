@@ -1333,3 +1333,96 @@ try { rgbProfile.Validate(); }
 catch (ArgumentException) { badColourRejected = true; }
 Check(badColourRejected, "profile rejects colours outside 24-bit RGB");
 Console.WriteLine("X-button input and opt-in RGB/LCD profile tests passed.");
+
+
+// Physical M1/M2/M3 selectors map to button bits 29/30/31. When
+// enabled, changing layers selects a separate, persisted mapping
+// and never forwards an M-key as a game input.
+var m1Frame = new byte[] { 1, 127, 127, 0, 0, 0, 0b0010_0000, 0 };
+var m2Frame = new byte[] { 1, 127, 127, 0, 0, 0, 0b0100_0000, 0 };
+var m3Frame = new byte[] { 1, 127, 127, 0, 0, 0, 0b1000_0000, 0 };
+Check(G13InputReport.TryParse(m1Frame, out var m1Input) && m1Input is not null &&
+      G13InputReport.TryParse(m2Frame, out var m2Input) && m2Input is not null &&
+      G13InputReport.TryParse(m3Frame, out var m3Input) && m3Input is not null,
+    "all three M-mode selector reports parse");
+Check(m1Input!.IsPhysicalBitPressed(G13MappingLayers.M1Bit) &&
+      m2Input!.IsPhysicalBitPressed(G13MappingLayers.M2Bit) &&
+      m3Input!.IsPhysicalBitPressed(G13MappingLayers.M3Bit),
+    "M1/M2/M3 are physical report bits 29/30/31");
+Check(G13MappingLayers.SelectorBits.SequenceEqual(new[] { 29, 30, 31 }),
+    "mode selectors cover exactly M1/M2/M3 (not MR)");
+
+var modeDetector = new G13LayerSelector();
+Check(modeDetector.Detect(m2Input) == 2,
+    "M2 rising edge activates layer 2");
+Check(modeDetector.Detect(m2Input) is null,
+    "held M2 does not continually reactivate its layer");
+Check(modeDetector.Detect(emptyReport!) is null &&
+      modeDetector.Detect(m3Input) == 3,
+    "releasing and pressing M3 activates layer 3");
+modeDetector.Seed(m1Input);
+Check(modeDetector.Detect(m1Input) is null,
+    "seeding the detector prevents a held M1 key from reactivating after a profile switch");
+Check(modeDetector.Detect(emptyReport!) is null &&
+      modeDetector.Detect(m1Input) == 1,
+    "M1 is selectable again after physical release and fresh press");
+
+var mMode = new MappingProfile { Name = "M-layer test", UseMappingLayers = true };
+mMode.Buttons[0] = new ButtonAction { Kind = MappingKind.Keyboard, Parameter = "A" };
+mMode.Buttons[G13MappingLayers.M2Bit] = new ButtonAction
+    { Kind = MappingKind.Keyboard, Parameter = "Z" };
+mMode.M2Buttons[0] = new ButtonAction { Kind = MappingKind.Keyboard, Parameter = "B" };
+mMode.M3Buttons[0] = new ButtonAction { Kind = MappingKind.VJoyButton, Parameter = "1" };
+mMode.Validate();
+Check(mMode.ForLayer(1).Buttons[0].Parameter == "A" &&
+      mMode.ForLayer(2).Buttons[0].Parameter == "B" &&
+      mMode.ForLayer(3).Buttons[0].Kind == MappingKind.VJoyButton,
+    "each layer returns its own G-key assignments");
+Check(mMode.ForLayer(3).GetVirtualButtons(g1!, 32) == 1 &&
+      mMode.ForLayer(2).GetVirtualButtons(g1!, 32) == 0,
+    "vJoy assignments follow the effective mapping layer");
+var m2Engine = new ButtonTransitionEngine(mMode.ForLayer(2));
+Check(m2Engine.Apply(g1!).SequenceEqual(new[]
+{
+    new InputEvent(InputEventKind.KeyDown, 0x42)
+}), "M2 G1 key emits its B mapping");
+Check(m2Engine.ReleaseAll().SequenceEqual(new[]
+{
+    new InputEvent(InputEventKind.KeyUp, 0x42)
+}), "layer switching can release the previous layer's held keyboard input");
+var noMkeys = G13MappingLayers.WithoutModeKeys(m2Input);
+Check(!noMkeys.IsPhysicalBitPressed(G13MappingLayers.M2Bit) &&
+      m2Input.IsPhysicalBitPressed(G13MappingLayers.M2Bit),
+    "input filtering removes M mode controls without modifying the original HID report");
+var preservedMr = new byte[] { 1, 127, 127, 0, 0, 0, 0, 0b0000_0001 };
+G13InputReport.TryParse(preservedMr, out var mrInput);
+Check(G13MappingLayers.WithoutModeKeys(mrInput!).IsPhysicalBitPressed(32),
+    "MR remains a normal physical input when M layers are enabled");
+
+var mModeClone = mMode.Clone("M-layer clone");
+mModeClone.M2Buttons[0].Parameter = "C";
+Check(mMode.M2Buttons[0].Parameter == "B" &&
+      mModeClone.M2Buttons[0].Parameter == "C",
+    "clone produces independent mapping dictionaries for each M layer");
+var mDoc = new ProfilesDocument
+{
+    SelectedProfile = mMode.Name, Profiles = new() { mMode }
+};
+string mJson = System.Text.Json.JsonSerializer.Serialize(mDoc);
+var mReload = System.Text.Json.JsonSerializer.Deserialize<ProfilesDocument>(mJson);
+Check(mReload is not null && mReload.Profiles[0].UseMappingLayers &&
+      mReload.Profiles[0].M2Buttons[0].Parameter == "B" &&
+      mReload.Profiles[0].M3Buttons[0].Kind == MappingKind.VJoyButton,
+    "M2/M3 mapping layers persist through profile serialization");
+var legacyProfile = System.Text.Json.JsonSerializer.Deserialize<MappingProfile>(
+    """{"Name":"Old single-layer","Buttons":{"0":{"Kind":1,"Parameter":"A"}}}""");
+Check(legacyProfile is not null && !legacyProfile.UseMappingLayers &&
+      legacyProfile.M2Buttons.Count == 0 && legacyProfile.M3Buttons.Count == 0,
+    "existing profiles default to disabled layers without data migration");
+var invalidLayer = mMode.Clone("Invalid M2");
+invalidLayer.M2Buttons[0].Parameter = "NoSuchKey";
+bool invalidM2Rejected = false;
+try { invalidLayer.Validate(); }
+catch (ArgumentException) { invalidM2Rejected = true; }
+Check(invalidM2Rejected, "M2 mappings are validated, not only M1 assignments");
+Console.WriteLine("M1/M2/M3 layer selector, edge, forwarding and persistence tests passed.");

@@ -730,3 +730,111 @@ Check(progressEvents.SequenceEqual(new[]
     new InputEvent(InputEventKind.Wheel, 120)
 }), "progress observers do not affect emitted macro events");
 Console.WriteLine("Manual insertion and macro playback progress regressions passed.");
+
+
+// Multi-row macro editor regressions and clipboard storage.
+var sourceRows = new List<MacroStep>
+{
+    new() { Kind = MacroStepKind.KeyDown, Parameter = "A", DelayAfterMs = 19 },
+    new() { Kind = MacroStepKind.KeyUp, Parameter = "A", DelayAfterMs = 31 },
+    new() { Kind = MacroStepKind.KeyDown, Parameter = "B", DelayAfterMs = 42 },
+    new() { Kind = MacroStepKind.KeyUp, Parameter = "B", DelayAfterMs = 53 },
+    new() { Kind = MacroStepKind.MouseClick, Parameter = "Left", DelayAfterMs = 65 }
+};
+var multiCopied = SequenceEditOperations.CopySelected(
+    sourceRows, new[] { 3, 1, 3 });
+Check(multiCopied.Count == 2 &&
+      multiCopied[0].Parameter == "A" &&
+      multiCopied[0].DelayAfterMs == 31 &&
+      multiCopied[1].Parameter == "B" &&
+      multiCopied[1].DelayAfterMs == 53,
+    "Ctrl+C copies disjoint rows in sequence order with exact delays");
+Check(!ReferenceEquals(multiCopied[0], sourceRows[1]),
+    "copied macro rows are deep copies");
+
+var afterDelete = SequenceEditOperations.RemoveSelected(
+    sourceRows, new[] { 3, 1 });
+Check(afterDelete.Count == 3 &&
+      afterDelete.Select(s => s.Kind).SequenceEqual(new[]
+      {
+          MacroStepKind.KeyDown,
+          MacroStepKind.KeyDown,
+          MacroStepKind.MouseClick
+      }) &&
+      sourceRows.Count == 5,
+    "Del and Ctrl+X remove all selected rows without modifying source snapshots");
+Check(SequenceEditOperations.RemoveSelected(sourceRows,
+    Enumerable.Range(0, sourceRows.Count)).Count == 0,
+    "multi-row deletion can temporarily leave an empty editing draft");
+
+var pastedMiddle = SequenceEditOperations.PasteSteps(
+    sourceRows, multiCopied, new[] { 0, 2 });
+Check(pastedMiddle.Count == 7 &&
+      pastedMiddle[3].Kind == MacroStepKind.KeyUp &&
+      pastedMiddle[3].Parameter == "A" &&
+      pastedMiddle[4].Parameter == "B" &&
+      pastedMiddle[5].Kind == MacroStepKind.KeyUp,
+    "Ctrl+V pastes after last selected row, preserving following steps");
+var pastedAppend = SequenceEditOperations.PasteSteps(
+    sourceRows, multiCopied, Array.Empty<int>());
+Check(pastedAppend.Count == 7 &&
+      pastedAppend[5].DelayAfterMs == 31 &&
+      pastedAppend[6].DelayAfterMs == 53,
+    "Ctrl+V without selection appends copied rows preserving recorded timing");
+
+bool tooManyPastedRejected = false;
+try
+{
+    SequenceEditOperations.PasteSteps(atCapacity,
+        multiCopied, new[] { 0 });
+}
+catch (ArgumentException) { tooManyPastedRejected = true; }
+Check(tooManyPastedRejected, "paste respects 200-step macro maximum");
+
+string stepPayload = MacroStepsClipboardCodec.Serialize(multiCopied);
+var decodedSteps = MacroStepsClipboardCodec.Deserialize(stepPayload);
+Check(decodedSteps.Count == 2 &&
+      decodedSteps[0].Kind == MacroStepKind.KeyUp &&
+      decodedSteps[0].Parameter == "A" &&
+      decodedSteps[0].DelayAfterMs == 31 &&
+      decodedSteps[1].DelayAfterMs == 53,
+    "typed clipboard JSON roundtrip preserves step order, action and delays");
+bool invalidClipboardRejected = false;
+try { MacroStepsClipboardCodec.Deserialize("{not JSON}"); }
+catch (ArgumentException) { invalidClipboardRejected = true; }
+Check(invalidClipboardRejected, "foreign or corrupt clipboard payload is rejected");
+bool maliciousClipboardRejected = false;
+try
+{
+    MacroStepsClipboardCodec.Deserialize(
+        "[{\"Kind\":999,\"Parameter\":\"A\",\"DelayAfterMs\":0}]");
+}
+catch (ArgumentException) { maliciousClipboardRejected = true; }
+Check(maliciousClipboardRejected, "invalid clipboard action codes are rejected");
+
+var recordedBlock = new List<MacroStep>
+{
+    new() { Kind = MacroStepKind.KeyDown, Parameter = "Z", DelayAfterMs = 25 },
+    new() { Kind = MacroStepKind.KeyUp, Parameter = "Z", DelayAfterMs = 0 }
+};
+var spliceInMiddle = SequenceEditOperations.InsertRecording(
+    sourceRows, recordedBlock, selectedIndex: 1, joinDelayMs: 25);
+Check(spliceInMiddle.Count == 7 &&
+      spliceInMiddle[2].DelayAfterMs == 25 &&
+      spliceInMiddle[3].DelayAfterMs == 25 &&
+      spliceInMiddle[4].Kind == MacroStepKind.KeyDown,
+    "recorded block inserted mid-sequence receives a nonzero trailing join delay");
+Check(recordedBlock[^1].DelayAfterMs == 0 &&
+      sourceRows[2].DelayAfterMs == 42,
+    "recording insertion does not mutate original steps");
+var appendedBlock = SequenceEditOperations.InsertRecording(
+    sourceRows, recordedBlock, selectedIndex: null, joinDelayMs: 25);
+Check(appendedBlock[^1].DelayAfterMs == 0,
+    "recorded block appended at end retains final zero delay");
+var customEnding = recordedBlock.Select(x => x.Clone()).ToList();
+customEnding[^1].DelayAfterMs = 80;
+var preservedJoin = SequenceEditOperations.InsertRecording(
+    sourceRows, customEnding, selectedIndex: 0, joinDelayMs: 25);
+Check(preservedJoin[2].DelayAfterMs == 80,
+    "user-specified nonzero join delay is preserved");
+Console.WriteLine("Macro multi-selection, clipboard and recording-join tests passed.");

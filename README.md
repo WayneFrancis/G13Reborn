@@ -273,3 +273,31 @@ how many UTF-16 code units have been sent, without displaying the
 macro's contents in the log. Logs show completion or cancellation.
 The recorded sequence itself and the existing safe text playback are
 unchanged.
+
+
+## Multiple-row edits and clipboard shortcuts
+
+In the Steps grid, use **Ctrl+click** or **Shift+click** to select
+multiple rows (including disjoint selections). **Remove selected** and
+the **Delete** key remove all selected steps, not just the current row.
+
+The grid supports **Ctrl+C** (copy), **Ctrl+X** (cut), and **Ctrl+V**
+(paste) for selected steps. Copied steps retain their action type,
+parameters, and individual after-delays. Clipboard data uses a private
+G13Reborn macro-steps format as well as readable text. This allows
+copy/paste between different macros within the app without treating
+arbitrary text as executable macro steps.
+
+Paste inserts **after the selected step**, or after the **last selected
+row** when several are selected. With no selection it appends. Cut
+removes rows only after the clipboard has accepted the content. When
+editing text inside an individual grid cell, standard text editing
+shortcuts remain available instead.
+
+Recorded sequences have a natural final after-delay of 0 ms. When
+**Record / insert steps...** inserts a recording before existing later
+steps, the last recorded step now receives the **After KeyUp** spinner's
+default join delay (25 ms), rather than immediately playing the next
+step. The join is added only if the last recorded step's delay is zero;
+a nonzero recorded delay is preserved. Recordings appended at the end
+keep their trailing zero delay.

@@ -17,8 +17,19 @@ internal sealed class MacroTestDialog : Form
     private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
 
     private readonly MacroDefinition _macro;
-    private readonly MacroPreviewRunner _runner =
-        new(Win32InputSender.Send, Win32InputSender.SendUnicodeText);
+    private readonly MacroPreviewRunner _runner;
+    private readonly object _traceGate = new();
+    private readonly List<string> _traceEntries = new();
+    private readonly TextBox _trace = new()
+    {
+        ReadOnly = true, Multiline = true,
+        ScrollBars = ScrollBars.Vertical, WordWrap = false,
+        Dock = DockStyle.Fill,
+        Font = new Font(FontFamily.GenericMonospace, 9f)
+    };
+    private int _printedTraceCount;
+    private int _currentStep;
+    private int _typedUnits;
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 100 };
     private readonly Label _status = new()
     {
@@ -39,10 +50,11 @@ internal sealed class MacroTestDialog : Form
         ArgumentNullException.ThrowIfNull(macro);
         macro.Validate();
         _macro = macro.Clone();
+        _runner = new MacroPreviewRunner(PreviewOutput, PreviewText);
 
         Text = $"Test macro — {_macro.Name}";
-        ClientSize = new Size(590, 220);
-        MinimumSize = new Size(490, 220);
+        ClientSize = new Size(680, 410);
+        MinimumSize = new Size(560, 360);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -55,9 +67,10 @@ internal sealed class MacroTestDialog : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(16),
             ColumnCount = 1,
-            RowCount = 3
+            RowCount = 4
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 102));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
 
@@ -72,18 +85,25 @@ internal sealed class MacroTestDialog : Form
                 "Click Cancel test to stop and release all preview-held keys."
         }, 0, 0);
         root.Controls.Add(_status, 0, 1);
+        root.Controls.Add(_trace, 0, 2);
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.RightToLeft
         };
         buttons.Controls.Add(_cancel);
-        root.Controls.Add(buttons, 0, 2);
+        root.Controls.Add(buttons, 0, 3);
         Controls.Add(root);
         CancelButton = _cancel;
 
         _cancel.Click += (_, _) => CancelClicked();
-        _timer.Tick += (_, _) => CheckCountdown();
+        _timer.Tick += (_, _) =>
+        {
+            if (!_started)
+                CheckCountdown();
+            else
+                UpdateTrace();
+        };
         Shown += (_, _) =>
         {
             _startsAt = DateTime.UtcNow.AddSeconds(3);
@@ -118,8 +138,8 @@ internal sealed class MacroTestDialog : Form
         }
 
         _started = true;
-        _timer.Stop();
         _status.Text = "Playing macro... Click Cancel test to stop.";
+        AddTrace("Playback started.");
         _ = RunTestAsync();
     }
 
@@ -130,7 +150,8 @@ internal sealed class MacroTestDialog : Form
         string result;
         try
         {
-            await Task.Run(() => _runner.RunAsync(_macro, timeout.Token));
+            await Task.Run(() => _runner.RunAsync(
+                _macro, timeout.Token, TrackStep));
             result = "Macro completed. All preview-held keys/buttons released.";
         }
         catch (OperationCanceledException)
@@ -147,11 +168,71 @@ internal sealed class MacroTestDialog : Form
         // Task completion means the runner has finished its finally block and
         // has attempted to release every held keyboard/mouse control.
         _finished = true;
+        AddTrace(result);
         if (IsDisposed || Disposing) return;
+        UpdateTrace();
         _status.Text = result;
         _cancel.Enabled = true;
         _cancel.Text = "Close";
         if (_closeOnFinish) Close();
+    }
+
+    private void TrackStep(int stepIndex, MacroStep step)
+    {
+        lock (_traceGate)
+            _currentStep = stepIndex + 1;
+        string parameter = string.IsNullOrWhiteSpace(step.Parameter)
+            ? "" : $" {step.Parameter}";
+        AddTrace($"Step {stepIndex + 1}/{_macro.Steps.Count}: " +
+            $"{step.Kind}{parameter}, delay after {step.DelayAfterMs} ms");
+    }
+
+    private void PreviewOutput(InputEvent action)
+    {
+        Win32InputSender.Send(action);
+        // Avoid logging raw keystrokes typed by a text macro. Sequence
+        // actions are already described in TrackStep.
+    }
+
+    private void PreviewText(string text)
+    {
+        Win32InputSender.SendUnicodeText(text);
+        lock (_traceGate)
+            _typedUnits += text.Length;
+    }
+
+    private void AddTrace(string message)
+    {
+        lock (_traceGate)
+        {
+            if (_traceEntries.Count < 240)
+                _traceEntries.Add(message);
+            else if (_traceEntries.Count == 240)
+                _traceEntries.Add("(Further events omitted)");
+        }
+    }
+
+    private void UpdateTrace()
+    {
+        if (IsDisposed || Disposing) return;
+        List<string> newLines;
+        int step;
+        int characters;
+        lock (_traceGate)
+        {
+            newLines = _traceEntries.Skip(_printedTraceCount).ToList();
+            _printedTraceCount = _traceEntries.Count;
+            step = _currentStep;
+            characters = _typedUnits;
+        }
+        if (newLines.Count > 0)
+            _trace.AppendText(string.Join(Environment.NewLine, newLines) +
+                Environment.NewLine);
+        if (_started && !_finished)
+            _status.Text = _macro.Mode == MacroMode.Text
+                ? $"Playing text: {characters}/{_macro.Text.Length} UTF-16 units sent."
+                : $"Playing step {step}/{_macro.Steps.Count}. " +
+                  "Click Cancel test to stop.";
     }
 
     private void CancelClicked()

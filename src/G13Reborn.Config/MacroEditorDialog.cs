@@ -28,10 +28,25 @@ internal sealed class MacroEditorDialog : Form
     private readonly DataGridView _steps = new()
     {
         Dock = DockStyle.Fill, AllowUserToAddRows = false,
-        AllowUserToDeleteRows = false, RowHeadersVisible = false,
+        AllowUserToDeleteRows = false, RowHeadersVisible = true,
+        RowHeadersWidth = 48,
+        SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
     };
-    private readonly Button _addStep = new() { Text = "Add step", AutoSize = true };
+    private readonly Button _addStep = new() { Text = "Add step (after)", AutoSize = true };
+    private readonly Button _insertBefore = new()
+    {
+        Text = "Insert before", AutoSize = true
+    };
+    private readonly Button _clearStepSelection = new()
+    {
+        Text = "Clear selection", AutoSize = true
+    };
+    private readonly Label _stepSelectionInfo = new()
+    {
+        Dock = DockStyle.Fill,
+        AutoSize = false
+    };
     private readonly Button _removeStep = new() { Text = "Remove step", AutoSize = true };
     private readonly Button _stepUp = new() { Text = "Move up", AutoSize = true };
     private readonly Button _stepDown = new() { Text = "Move down", AutoSize = true };
@@ -106,9 +121,9 @@ internal sealed class MacroEditorDialog : Form
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
         right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        right.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        right.RowStyles.Add(new RowStyle(SizeType.Absolute, 86));
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
-        right.RowStyles.Add(new RowStyle(SizeType.Absolute, 53));
+        right.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
         var nameBar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
         nameBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95));
         nameBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -162,12 +177,20 @@ internal sealed class MacroEditorDialog : Form
                 _steps.CommitEdit(DataGridViewDataErrorContexts.Commit);
         };
         _steps.DataError += (_, e) => { e.ThrowException = false; };
+        _steps.SelectionChanged += (_, _) => UpdateSelectionInfo();
+        _steps.CurrentCellChanged += (_, _) => UpdateSelectionInfo();
+        _steps.RowsAdded += (_, _) => NumberStepRows();
+        _steps.RowsRemoved += (_, _) => NumberStepRows();
         right.Controls.Add(_steps, 0, 4);
 
-        var stepButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        var stepButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, WrapContents = true
+        };
         stepButtons.Controls.AddRange(new Control[]
         {
-            _addStep, _removeStep, _stepUp, _stepDown, _recordSteps
+            _addStep, _insertBefore, _removeStep, _stepUp,
+            _stepDown, _clearStepSelection, _recordSteps
         });
         right.Controls.Add(stepButtons, 0, 5);
 
@@ -191,13 +214,21 @@ internal sealed class MacroEditorDialog : Form
             _keyUpDelay, _applyKeyUpDelay
         });
         right.Controls.Add(timingBar, 0, 6);
-        right.Controls.Add(new Label
+        var selectionHelp = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2
+        };
+        selectionHelp.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+        selectionHelp.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        selectionHelp.Controls.Add(_stepSelectionInfo, 0, 0);
+        selectionHelp.Controls.Add(new Label
         {
             Dock = DockStyle.Fill,
-            Text = "Select a step to record after it; clear selection to append. " +
-                "Each Apply button changes only matching keyboard steps. " +
-                "25ms after KeyDown + 25ms after KeyUp gives roughly 50ms per key cycle."
-        }, 0, 7);
+            Text = "No selection: Add/Record append; Insert before prepends. " +
+                "Select a numbered row to insert relative to it. " +
+                "25ms after KeyDown + 25ms after KeyUp ≈ 50ms per key cycle."
+        }, 0, 1);
+        right.Controls.Add(selectionHelp, 0, 7);
         root.Controls.Add(right, 1, 0);
 
         var bottom = new FlowLayoutPanel
@@ -219,7 +250,9 @@ internal sealed class MacroEditorDialog : Form
         _mode.SelectedIndexChanged += (_, _) => UpdateMode();
         create.Click += (_, _) => AddMacro();
         delete.Click += (_, _) => DeleteMacro();
-        _addStep.Click += (_, _) => _steps.Rows.Add("KeyPress", "A", "0");
+        _addStep.Click += (_, _) => InsertManualStep(before: false);
+        _insertBefore.Click += (_, _) => InsertManualStep(before: true);
+        _clearStepSelection.Click += (_, _) => ClearStepSelection();
         _removeStep.Click += (_, _) =>
         {
             if (_steps.CurrentRow is not null)
@@ -274,8 +307,7 @@ internal sealed class MacroEditorDialog : Form
             // DataGridView selects the first row automatically on load.
             // That is NOT an explicit user selection. Leave it unselected
             // so "Record / insert" appends by default.
-            _steps.ClearSelection();
-            _steps.CurrentCell = null;
+            ClearStepSelection();
             UpdateMode();
             _name.Enabled = _mode.Enabled = index >= 0;
         }
@@ -289,7 +321,9 @@ internal sealed class MacroEditorDialog : Form
         _text.Enabled = active && isText;
         _textDelay.Enabled = active && isText;
         _steps.Enabled = active && !isText;
-        _addStep.Enabled = _removeStep.Enabled = active && !isText;
+        _addStep.Enabled = _insertBefore.Enabled = _removeStep.Enabled =
+            active && !isText;
+        _clearStepSelection.Enabled = active && !isText;
         _stepUp.Enabled = _stepDown.Enabled = active && !isText;
         _keyDownDelay.Enabled = _keyUpDelay.Enabled = active && !isText;
         _applyKeyDownDelay.Enabled = _applyKeyUpDelay.Enabled = active && !isText;
@@ -297,6 +331,62 @@ internal sealed class MacroEditorDialog : Form
         // Accepting converts that macro to Steps, without changing its name.
         _recordSteps.Enabled = active;
         _testMacro.Enabled = active;
+    }
+
+    /// <summary>
+    /// CurrentCell is deliberately null when the user has not selected a
+    /// step. Do not use Rows[0] as an implicit selection after a reload.
+    /// </summary>
+    private int? SelectedStepIndex =>
+        _steps.CurrentCell is null ? null : _steps.CurrentCell.RowIndex;
+
+    private void ClearStepSelection()
+    {
+        _steps.ClearSelection();
+        _steps.CurrentCell = null;
+        UpdateSelectionInfo();
+    }
+
+    private void NumberStepRows()
+    {
+        for (int i = 0; i < _steps.Rows.Count; i++)
+            _steps.Rows[i].HeaderCell.Value = (i + 1).ToString();
+        UpdateSelectionInfo();
+    }
+
+    private void UpdateSelectionInfo()
+    {
+        if (_stepSelectionInfo is null) return;
+        int? index = SelectedStepIndex;
+        _stepSelectionInfo.Text = index.HasValue
+            ? $"Selected step {index.Value + 1} of {_steps.Rows.Count} " +
+              "— Add/Record after it, or Insert before it."
+            : $"{_steps.Rows.Count} step(s); no selection " +
+              "— Add/Record append; Insert before adds at the start.";
+    }
+
+    private void InsertManualStep(bool before)
+    {
+        if (_loadedIndex < 0 ||
+            _mode.SelectedItem?.ToString() != nameof(MacroMode.Steps))
+            return;
+        try
+        {
+            // Capture selection before a possible EndEdit focus change.
+            int? selectedIndex = SelectedStepIndex;
+            _steps.EndEdit();
+            int index = SequenceEditOperations.GetInsertionIndex(
+                _steps.Rows.Count, selectedIndex, before);
+            _steps.Rows.Insert(index, "KeyPress", "A", "0");
+            _steps.CurrentCell = _steps.Rows[index].Cells[0];
+            _steps.Rows[index].Selected = true;
+            UpdateSelectionInfo();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Cannot add macro step",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void MoveStep(int direction)
@@ -377,7 +467,7 @@ internal sealed class MacroEditorDialog : Form
 
         // Capture selection BEFORE committing the grid: the validation
         // process can change focus and thus DataGridView.CurrentRow.
-        int? selectedIndex = _steps.CurrentRow?.Index;
+        int? selectedIndex = SelectedStepIndex;
 
         // A newly created Steps macro is allowed to have zero steps here.
         // Validation remains strict when saving a finished macro.

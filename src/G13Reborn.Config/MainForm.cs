@@ -69,6 +69,7 @@ public sealed class MainForm : Form
     private CancellationTokenSource? _macroCancel;
     private Task? _macroTask;
     private string? _playingMacro;
+    private int _playingMacroBit = -1;
     private readonly ButtonReleaseGate _releaseGate = new();
     private G13InputReport? _lastReport;
     private DateTime _nextForegroundPoll = DateTime.MinValue;
@@ -752,22 +753,33 @@ public sealed class MainForm : Form
                     foreach (var allowed in _deferredNormal.Receive(action))
                         _output.ApplyNormal(allowed);
 
-                // Trigger macros on physical press edges, never on HID
-                // report repetitions. Only one macro runs at a time.
+                // Process BOTH press and release edges. A while-held
+                // macro stops immediately on release; toggle stops on its
+                // next fresh press. Repeated HID reports do not retrigger.
+                // Only one macro can own the output at a time.
                 if (_macroDetector is not null)
-                    foreach (string name in _macroDetector.Detect(safeReport))
+                    foreach (MacroButtonTransition transition in
+                             _macroDetector.DetectTransitions(safeReport))
                     {
                         MacroDefinition? macro = _activeProfile.Macros.FirstOrDefault(m =>
-                            string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
-                        if (macro is not null)
-                            TryStartMacroLocked(macro.Clone());
+                            string.Equals(m.Name, transition.MacroName,
+                                StringComparison.OrdinalIgnoreCase));
+                        if (macro is null) continue;
+                        bool isActive = _macroCancel is not null &&
+                            _playingMacroBit == transition.Bit;
+                        MacroRepeatAction action = MacroRepeatPolicy.OnTransition(
+                            macro.RepeatMode, transition.IsPressed, isActive);
+                        if (action == MacroRepeatAction.Stop)
+                            CancelMacroLocked();
+                        else if (action == MacroRepeatAction.Start)
+                            TryStartMacroLocked(macro.Clone(), transition.Bit);
                     }
             }
             Interlocked.Increment(ref _forwardedReports);
         }
     }
 
-    private void TryStartMacroLocked(MacroDefinition macro)
+    private void TryStartMacroLocked(MacroDefinition macro, int physicalBit)
     {
         // Called under _gate; do not queue overlapping macros. A retrigger
         // requires a physical release and a fresh press.
@@ -777,6 +789,7 @@ public sealed class MainForm : Form
         var cancellation = new CancellationTokenSource();
         _macroCancel = cancellation;
         _playingMacro = macro.Name;
+        _playingMacroBit = physicalBit;
         if (macro.Mode == MacroMode.Text)
             _deferredNormal.Begin();
         bool finishedSuccessfully = false;
@@ -784,7 +797,7 @@ public sealed class MainForm : Form
         {
             try
             {
-                await MacroPlayback.ExecuteAsync(macro,
+                await MacroRepeatRunner.ExecuteAsync(macro,
                     action =>
                     {
                         lock (_gate)
@@ -801,6 +814,15 @@ public sealed class MainForm : Form
                             if (ReferenceEquals(_macroCancel, cancellation) &&
                                 !cancellation.IsCancellationRequested)
                                 Win32InputSender.SendUnicodeText(text);
+                    },
+                    () =>
+                    {
+                        // A pass can intentionally finish with held
+                        // keys/mouse buttons. Release before repeating.
+                        lock (_gate)
+                            if (ReferenceEquals(_macroCancel, cancellation) &&
+                                !cancellation.IsCancellationRequested)
+                                _output.ReleaseMacro();
                     },
                     cancellation.Token);
                 finishedSuccessfully = true;
@@ -846,6 +868,7 @@ public sealed class MainForm : Form
                         _macroCancel = null;
                         _macroTask = null;
                         _playingMacro = null;
+                        _playingMacroBit = -1;
                     }
                 }
                 cancellation.Dispose();
@@ -860,6 +883,7 @@ public sealed class MainForm : Form
         _macroCancel = null;
         _macroTask = null;
         _playingMacro = null;
+        _playingMacroBit = -1;
         cancellation?.Cancel();
         _deferredNormal.End(replay: false);
         try { _output.ReleaseMacro(); }

@@ -46,6 +46,19 @@ public sealed class MainForm : Form
         Minimum = 0, Maximum = 30, Value = 10, Width = 48
     };
     private readonly CheckBox _invertY = new() { Text = "Invert Y", AutoSize = true };
+    private readonly CheckBox _useRgb = new()
+    {
+        Text = "Use profile RGB", AutoSize = true
+    };
+    private readonly Button _pickRgb = new()
+    {
+        Text = "RGB colour...", AutoSize = true,
+        BackColor = Color.FromArgb(0x5A, 0xFF, 0x6E)
+    };
+    private readonly CheckBox _lcdStatus = new()
+    {
+        Text = "Show LCD status", AutoSize = true
+    };
     private readonly DataGridView _grid = new();
     private readonly Label _status = new() { AutoSize = true, Text = "Stopped." };
     private readonly Label _activity = new() { AutoSize = true, Text = "No input yet." };
@@ -75,6 +88,11 @@ public sealed class MainForm : Form
     private DateTime _nextForegroundPoll = DateTime.MinValue;
     private string? _foregroundName;
     private G13InputReader? _reader;
+    private G13DeviceInfo? _rgbOutputDevice;
+    private G13DeviceInfo? _lcdOutputDevice;
+    private DateTime _nextLcdWrite = DateTime.MinValue;
+    private bool _lcdBusy;
+    private bool _lcdFailed;
     private VJoyDevice? _vJoy;
     private CancellationTokenSource? _cancellation;
     private Task? _readTask;
@@ -108,7 +126,7 @@ public sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
         Controls.Add(root);
@@ -138,10 +156,11 @@ public sealed class MainForm : Form
         });
         root.Controls.Add(deviceBar, 0, 2);
 
-        var optionsBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        var optionsBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true };
         optionsBar.Controls.AddRange(new Control[]
         {
-            _vJoyEnabled, _keyboardMouse, TextLabel("Deadzone %"), _deadzone, _invertY
+            _vJoyEnabled, _keyboardMouse, TextLabel("Deadzone %"), _deadzone,
+            _invertY, _useRgb, _pickRgb, _lcdStatus
         });
         root.Controls.Add(optionsBar, 0, 3);
 
@@ -225,6 +244,22 @@ public sealed class MainForm : Form
         _invertY.CheckedChanged += (_, _) => MarkDirty();
         _autoSwitch.CheckedChanged += (_, _) => MarkDirty();
         _associatedExecutables.TextChanged += (_, _) => MarkDirty();
+        _useRgb.CheckedChanged += (_, _) => MarkDirty();
+        _lcdStatus.CheckedChanged += (_, _) => MarkDirty();
+        _pickRgb.Click += (_, _) =>
+        {
+            if (_running) return;
+            using var picker = new ColorDialog
+            {
+                Color = _pickRgb.BackColor,
+                FullOpen = true
+            };
+            if (picker.ShowDialog(this) == DialogResult.OK)
+            {
+                _pickRgb.BackColor = picker.Color;
+                MarkDirty();
+            }
+        };
 
         try
         {
@@ -280,6 +315,12 @@ public sealed class MainForm : Form
             _profiles.SelectedItem = profile.Name;
             _deadzone.Value = profile.DeadzonePercent;
             _invertY.Checked = profile.InvertY;
+            _useRgb.Checked = profile.UseProfileRgb;
+            _pickRgb.BackColor = Color.FromArgb(
+                (int)((profile.ProfileRgb >> 16) & 0xFF),
+                (int)((profile.ProfileRgb >> 8) & 0xFF),
+                (int)(profile.ProfileRgb & 0xFF));
+            _lcdStatus.Checked = _document.LcdStatusEnabled;
             _associatedExecutables.Text = string.Join(", ", profile.ExecutableNames);
             _autoSwitch.Checked = _document.AutoSwitchEnabled;
             _grid.Rows.Clear();
@@ -456,6 +497,10 @@ public sealed class MainForm : Form
                 replacement.Macros = _pendingMacros.Select(m => m.Clone()).ToList();
             replacement.DeadzonePercent = (int)_deadzone.Value;
             replacement.InvertY = _invertY.Checked;
+            replacement.UseProfileRgb = _useRgb.Checked;
+            Color chosen = _pickRgb.BackColor;
+            replacement.ProfileRgb =
+                ((uint)chosen.R << 16) | ((uint)chosen.G << 8) | chosen.B;
             replacement.ExecutableNames = _associatedExecutables.Text
                 .Split(new[] { ',', ';', '\r', '\n' },
                     StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
@@ -481,12 +526,15 @@ public sealed class MainForm : Form
             _document.Profiles[index] = replacement;
             _document.SelectedProfile = _currentName;
             bool previousAutoSwitch = _document.AutoSwitchEnabled;
+            bool previousLcdStatus = _document.LcdStatusEnabled;
             _document.AutoSwitchEnabled = _autoSwitch.Checked;
+            _document.LcdStatusEnabled = _lcdStatus.Checked;
             try { ProfileStore.Save(_document); }
             catch
             {
                 _document.Profiles[index] = previous;
                 _document.AutoSwitchEnabled = previousAutoSwitch;
+                _document.LcdStatusEnabled = previousLcdStatus;
                 throw;
             }
             _pendingMacros = null;
@@ -659,6 +707,15 @@ public sealed class MainForm : Form
         {
             var profile = Current().Clone(Current().Name);
             var engine = new ButtonTransitionEngine(profile);
+            // Enumerate output-capable HID collections only if hardware
+            // status/colour output was explicitly enabled by the user.
+            var outputs = profile.UseProfileRgb || _document.LcdStatusEnabled
+                ? G13DeviceDiscovery.Enumerate()
+                : Array.Empty<G13DeviceInfo>();
+            G13DeviceInfo? rgb = outputs.FirstOrDefault(x =>
+                x.FeatureReportLength is >= G13HardwareReports.FeatureLength and <= 4096);
+            G13DeviceInfo? lcd = outputs.FirstOrDefault(x =>
+                x.OutputReportLength == G13HardwareReports.LcdReportLength);
             // Open vJoy first, so a driver failure never starts keyboard injection.
             VJoyDevice? vjoy = _vJoyEnabled.Checked ? VJoyDevice.Open(1) : null;
             G13InputReader reader;
@@ -675,6 +732,10 @@ public sealed class MainForm : Form
                 _releaseGate.Clear();
                 _vJoy = vjoy;
                 _reader = reader;
+                _rgbOutputDevice = rgb;
+                _lcdOutputDevice = lcd;
+                _lcdFailed = false;
+                _nextLcdWrite = DateTime.MinValue;
                 _nativeOutputEnabled = _keyboardMouse.Checked;
                 _cancellation = cancellation;
             }
@@ -683,6 +744,7 @@ public sealed class MainForm : Form
             _readTask = Task.Run(() => RunReaderAsync(reader, cancellation.Token));
             _status.Text = "Running: " + profile.Name +
                 " — press Stop / release before modifying profiles.";
+            ApplyProfileRgb(profile);
             UpdateControlState();
         }
         catch (Exception ex)
@@ -927,6 +989,10 @@ public sealed class MainForm : Form
             _macroDetector = null;
             _activeProfile = null;
             _reader = null;
+            _rgbOutputDevice = null;
+            _lcdOutputDevice = null;
+            _lcdFailed = false;
+            _nextLcdWrite = DateTime.MinValue;
             _readTask = null;
             _cancellation = null;
             _nativeOutputEnabled = false;
@@ -969,6 +1035,57 @@ public sealed class MainForm : Form
             $"Stick X/Y: {Volatile.Read(ref _lastX)}/{Volatile.Read(ref _lastY)}  |  " +
             $"Pressed controls: {Volatile.Read(ref _pressedCount)}" +
             (playingMacro is null ? "" : $"  |  Macro: {playingMacro}");
+
+        if (_running && _document.LcdStatusEnabled &&
+            !_lcdFailed && !_lcdBusy && _lcdOutputDevice is not null &&
+            DateTime.UtcNow >= _nextLcdWrite)
+        {
+            _nextLcdWrite = DateTime.UtcNow.AddSeconds(1);
+            _ = UpdateLcdStatusAsync(activeName, playingMacro);
+        }
+    }
+
+    private async Task UpdateLcdStatusAsync(string profile, string? macro)
+    {
+        if (_lcdOutputDevice is not G13DeviceInfo device || _lcdBusy)
+            return;
+        _lcdBusy = true;
+        try
+        {
+            byte[] frame = G13LcdStatusRenderer.Render(
+                profile, macro, DateTime.Now);
+            await G13OutputDevice.SendLcdFrameAsync(device, frame);
+        }
+        catch (Exception ex)
+        {
+            // LCD is optional; keep keyboard and mouse forwarding alive.
+            _lcdFailed = true;
+            if (!IsDisposed)
+                _status.Text = "LCD status disabled until next Start: " + ex.Message;
+        }
+        finally { _lcdBusy = false; }
+    }
+
+    private void ApplyProfileRgb(MappingProfile profile)
+    {
+        if (!profile.UseProfileRgb) return;
+        if (_rgbOutputDevice is not G13DeviceInfo device)
+        {
+            _status.Text = "No G13 RGB feature interface found; forwarding remains active.";
+            return;
+        }
+        try
+        {
+            G13OutputDevice.SetRgb(device,
+                (byte)(profile.ProfileRgb >> 16),
+                (byte)(profile.ProfileRgb >> 8),
+                (byte)profile.ProfileRgb);
+        }
+        catch (Exception ex)
+        {
+            // Colour is cosmetic; do not stop input output or loop retries.
+            _status.Text = "Profile RGB not applied: " + ex.Message;
+        }
     }
 
     private void SwitchActiveProfile(MappingProfile selected)
@@ -998,6 +1115,8 @@ public sealed class MainForm : Form
 
         _status.Text = $"Switched to '{selected.Name}' for " +
             (_foregroundName ?? "an unknown application") + ".";
+        _nextLcdWrite = DateTime.MinValue;
+        ApplyProfileRgb(selected);
     }
 
     private async Task StopAfterProfileErrorAsync(Exception ex)
@@ -1024,6 +1143,9 @@ public sealed class MainForm : Form
         _vJoyEnabled.Enabled = !_running;
         _deadzone.Enabled = !_running;
         _invertY.Enabled = !_running;
+        _useRgb.Enabled = !_running;
+        _pickRgb.Enabled = !_running;
+        _lcdStatus.Enabled = !_running;
         _grid.ReadOnly = _running;
         _start.Enabled = !_running && _devices.SelectedItem is not null;
         _stop.Enabled = _running;

@@ -12,6 +12,7 @@ internal static class NativeHid
     private const uint ShareReadWrite = 0x03;
     private const uint OpenExisting = 3;
     private const uint GenericRead = 0x80000000;
+    private const uint GenericWrite = 0x40000000;
     private const uint FileFlagOverlapped = 0x40000000;
     private const int ErrorNoMoreItems = 259;
 
@@ -78,6 +79,11 @@ internal static class NativeHid
 
     [DllImport("hid.dll")]
     private static extern int HidP_GetCaps(IntPtr preparsedData, IntPtr capabilities);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool HidD_SetFeature(
+        SafeFileHandle device, byte[] report, int reportLength);
 
     internal static IReadOnlyList<string> EnumeratePaths()
     {
@@ -150,6 +156,32 @@ internal static class NativeHid
                 "Logitech software or a driver may hold exclusive access.");
         }
         return handle;
+    }
+
+    internal static SafeFileHandle OpenForWrite(string path, bool asynchronous)
+    {
+        if (!path.Contains("vid_046d&pid_c21c",
+            StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Only Logitech G13 HID paths may be used.", nameof(path));
+        var handle = CreateFile(path, GenericWrite, ShareReadWrite,
+            IntPtr.Zero, OpenExisting,
+            asynchronous ? FileFlagOverlapped : 0, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new Win32Exception(error,
+                "Cannot open the G13 output interface. Logitech Gaming Software " +
+                "or another program may have exclusive access.");
+        }
+        return handle;
+    }
+
+    internal static void SendFeature(SafeFileHandle handle, byte[] report)
+    {
+        if (!HidD_SetFeature(handle, report, report.Length))
+            throw new Win32Exception(Marshal.GetLastWin32Error(),
+                "The G13 refused the feature report.");
     }
 
     internal static bool TryGetVersion(SafeFileHandle handle, out ushort version)

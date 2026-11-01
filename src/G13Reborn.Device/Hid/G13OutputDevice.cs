@@ -1,0 +1,59 @@
+namespace G13Reborn.Device.Hid;
+
+/// <summary>
+/// Explicit, one-shot G13 hardware output. It never starts its own
+/// background writer and never touches an input reader's handle.
+/// </summary>
+public static class G13OutputDevice
+{
+    public static void SetRgb(G13DeviceInfo device, byte red, byte green, byte blue) =>
+        SendFeature(device, G13HardwareReports.Rgb(red, green, blue));
+
+    public static void SetMacroLeds(
+        G13DeviceInfo device, bool m1, bool m2, bool m3, bool mr) =>
+        SendFeature(device, G13HardwareReports.MacroLeds(m1, m2, m3, mr));
+
+    private static void SendFeature(G13DeviceInfo device, byte[] payload)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        CheckG13(device);
+        if (device.FeatureReportLength < G13HardwareReports.FeatureLength ||
+            device.FeatureReportLength > 4096)
+            throw new NotSupportedException(
+                $"This HID collection's feature report is {device.FeatureReportLength} bytes; " +
+                "a G13 LED control requires at least 5 bytes.");
+
+        byte[] report = new byte[device.FeatureReportLength];
+        payload.CopyTo(report, 0);
+        using var handle = NativeHid.OpenForWrite(device.Path, asynchronous: false);
+        NativeHid.SendFeature(handle, report);
+    }
+
+    public static async Task SendLcdFrameAsync(
+        G13DeviceInfo device, byte[] frame, CancellationToken cancel = default)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(frame);
+        CheckG13(device);
+        if (device.OutputReportLength != G13HardwareReports.LcdReportLength)
+            throw new NotSupportedException(
+                $"This HID collection's output report is {device.OutputReportLength} bytes, " +
+                $"not the G13 LCD's {G13HardwareReports.LcdReportLength}.");
+        if (frame.Length != G13HardwareReports.LcdReportLength ||
+            frame[0] != G13HardwareReports.LcdReportId)
+            throw new ArgumentException("Invalid G13 LCD report.", nameof(frame));
+
+        using var handle = NativeHid.OpenForWrite(device.Path, asynchronous: true);
+        using var stream = new FileStream(handle, FileAccess.Write, 4096, isAsync: true);
+        await stream.WriteAsync(frame, cancel).ConfigureAwait(false);
+    }
+
+    private static void CheckG13(G13DeviceInfo device)
+    {
+        if (device.VendorId != G13DeviceDiscovery.VendorId ||
+            device.ProductId != G13DeviceDiscovery.ProductId ||
+            !device.Path.Contains("vid_046d&pid_c21c",
+                StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Selected device is not a Logitech G13.");
+    }
+}

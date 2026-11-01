@@ -59,6 +59,14 @@ public sealed class MainForm : Form
     {
         Text = "Show LCD status", AutoSize = true
     };
+    private readonly CheckBox _enableLayers = new()
+    {
+        Text = "Enable M1/M2/M3 layers", AutoSize = true
+    };
+    private readonly ComboBox _editLayer = new()
+    {
+        Width = 90, DropDownStyle = ComboBoxStyle.DropDownList
+    };
     private readonly DataGridView _grid = new();
     private readonly Label _status = new() { AutoSize = true, Text = "Stopped." };
     private readonly Label _activity = new() { AutoSize = true, Text = "No input yet." };
@@ -72,6 +80,11 @@ public sealed class MainForm : Form
     // Editor changes are staged separately from the persisted profile.
     // Discarding a dirty profile must not silently save unsaved macros.
     private List<MacroDefinition>? _pendingMacros;
+    private Dictionary<int, Dictionary<int, ButtonAction>> _pendingLayerMaps = new();
+    private int _editingLayer = 1;
+    private int _activeLayer = 1;
+    private readonly G13LayerSelector _layerSelector = new();
+    private bool _layerLedWarningShown;
     private bool _running;
     private bool _nativeOutputEnabled;
     private MappingProfile? _activeProfile;
@@ -120,13 +133,14 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 6,
+            RowCount = 7,
             Padding = new Padding(12)
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
         Controls.Add(root);
@@ -163,6 +177,19 @@ public sealed class MainForm : Form
             _invertY, _useRgb, _pickRgb, _lcdStatus
         });
         root.Controls.Add(optionsBar, 0, 3);
+
+        var layersBar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, WrapContents = false
+        };
+        _editLayer.Items.AddRange(new object[] { "M1", "M2", "M3" });
+        _editLayer.SelectedIndex = 0;
+        layersBar.Controls.AddRange(new Control[]
+        {
+            _enableLayers, TextLabel("Edit mapping layer"), _editLayer,
+            TextLabel("M keys select a layer when forwarding; active G-keys are released on switch.")
+        });
+        root.Controls.Add(layersBar, 0, 4);
 
         _grid.Dock = DockStyle.Fill;
         _grid.AllowUserToAddRows = false;
@@ -215,7 +242,7 @@ public sealed class MainForm : Form
             e.ThrowException = false;
             _status.Text = "Invalid cell value: " + e.Exception?.Message;
         };
-        root.Controls.Add(_grid, 0, 4);
+        root.Controls.Add(_grid, 0, 5);
 
         var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         bottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -224,7 +251,7 @@ public sealed class MainForm : Form
         _activity.Dock = DockStyle.Fill;
         bottom.Controls.Add(_status, 0, 0);
         bottom.Controls.Add(_activity, 0, 1);
-        root.Controls.Add(bottom, 0, 5);
+        root.Controls.Add(bottom, 0, 6);
 
         _profiles.SelectionChangeCommitted += (_, _) => ProfileSelected();
         _addProfile.Click += (_, _) => CloneProfile();
@@ -244,6 +271,27 @@ public sealed class MainForm : Form
         _invertY.CheckedChanged += (_, _) => MarkDirty();
         _autoSwitch.CheckedChanged += (_, _) => MarkDirty();
         _associatedExecutables.TextChanged += (_, _) => MarkDirty();
+        _enableLayers.CheckedChanged += (_, _) =>
+        {
+            if (_loading) return;
+            if (_editingLayer != 1 && !_enableLayers.Checked)
+            {
+                CaptureLayerGrid();
+                _editingLayer = 1;
+                _editLayer.SelectedIndex = 0;
+                LoadLayerGrid();
+            }
+            UpdateControlState();
+            RefreshSelectorRows();
+            MarkDirty();
+        };
+        _editLayer.SelectionChangeCommitted += (_, _) =>
+        {
+            if (_running || _loading || !_enableLayers.Checked) return;
+            CaptureLayerGrid();
+            _editingLayer = _editLayer.SelectedIndex + 1;
+            LoadLayerGrid();
+        };
         _useRgb.CheckedChanged += (_, _) => MarkDirty();
         _lcdStatus.CheckedChanged += (_, _) => MarkDirty();
         _pickRgb.Click += (_, _) =>
@@ -323,24 +371,91 @@ public sealed class MainForm : Form
             _lcdStatus.Checked = _document.LcdStatusEnabled;
             _associatedExecutables.Text = string.Join(", ", profile.ExecutableNames);
             _autoSwitch.Checked = _document.AutoSwitchEnabled;
-            _grid.Rows.Clear();
-
-            foreach (var button in G13ButtonMappings.PhysicalButtons)
+            _pendingLayerMaps = new()
             {
-                var mapping = profile.Buttons.GetValueOrDefault(button.Bit) ??
-                    new ButtonAction { Kind = MappingKind.None };
-                int index = _grid.Rows.Add(
-                    button.Name, button.Bit, mapping.Kind.ToString(), mapping.Parameter);
-                DataGridViewRow row = _grid.Rows[index];
-                row.Tag = button.Bit;
-                row.Cells["Kind"].Tag = mapping.Kind;
-                SetParameterCell(row, mapping.Kind, mapping.Parameter);
-            }
+                [1] = MappingProfile.CloneButtons(profile.Buttons),
+                [2] = MappingProfile.CloneButtons(
+                    !profile.UseMappingLayers && profile.M2Buttons.Count == 0
+                        ? profile.Buttons : profile.M2Buttons),
+                [3] = MappingProfile.CloneButtons(
+                    !profile.UseMappingLayers && profile.M3Buttons.Count == 0
+                        ? profile.Buttons : profile.M3Buttons)
+            };
+            _editingLayer = 1;
+            _enableLayers.Checked = profile.UseMappingLayers;
+            _editLayer.SelectedIndex = 0;
+            LoadLayerGrid();
             _dirty = false;
             _status.Text = $"Profile '{profile.Name}' loaded. Input output is stopped.";
             UpdateControlState();
         }
         finally { _loading = false; }
+    }
+
+    private Dictionary<int, ButtonAction> ReadGridBindings()
+    {
+        _grid.EndEdit();
+        var result = new Dictionary<int, ButtonAction>();
+        foreach (DataGridViewRow row in _grid.Rows)
+        {
+            int bit = (int)row.Tag!;
+            result[bit] = new ButtonAction
+            {
+                Kind = Enum.Parse<MappingKind>(
+                    row.Cells["Kind"].Value?.ToString() ?? "None"),
+                Parameter = row.Cells["Parameter"].Value?.ToString()?.Trim() ?? ""
+            };
+        }
+        return result;
+    }
+
+    private void CaptureLayerGrid()
+    {
+        if (_grid.Rows.Count > 0)
+            _pendingLayerMaps[_editingLayer] = ReadGridBindings();
+    }
+
+    private void LoadLayerGrid()
+    {
+        bool previousLoading = _loading;
+        _loading = true;
+        try
+        {
+            _grid.Rows.Clear();
+            var bindings = _pendingLayerMaps[_editingLayer];
+            foreach (var button in G13ButtonMappings.PhysicalButtons)
+            {
+                ButtonAction mapping = bindings.GetValueOrDefault(button.Bit) ??
+                    new ButtonAction { Kind = MappingKind.None };
+                int index = _grid.Rows.Add(button.Name, button.Bit,
+                    mapping.Kind.ToString(), mapping.Parameter);
+                DataGridViewRow row = _grid.Rows[index];
+                row.Tag = button.Bit;
+                row.Cells["Kind"].Tag = mapping.Kind;
+                SetParameterCell(row, mapping.Kind, mapping.Parameter);
+            }
+            RefreshSelectorRows();
+        }
+        finally { _loading = previousLoading; }
+    }
+
+    private void RefreshSelectorRows()
+    {
+        bool reserved = _enableLayers.Checked;
+        foreach (DataGridViewRow row in _grid.Rows)
+        {
+            int bit = (int)row.Tag!;
+            bool selector = reserved &&
+                G13MappingLayers.SelectorBits.Contains(bit);
+            row.Cells["Kind"].ReadOnly = selector;
+            row.Cells["Parameter"].ReadOnly = selector;
+            row.Cells["Physical"].Value =
+                G13ButtonMappings.PhysicalButtons
+                    .First(x => x.Bit == bit).Name +
+                (selector ? " (layer selector)" : "");
+            row.DefaultCellStyle.BackColor = selector
+                ? SystemColors.Control : _grid.DefaultCellStyle.BackColor;
+        }
     }
 
     /// <summary>
@@ -433,57 +548,39 @@ public sealed class MainForm : Form
         if (editor.ShowDialog(this) != DialogResult.OK || editor.Result is null)
             return;
 
-        _grid.EndEdit();
-        var gridBindings = new Dictionary<int, ButtonAction>();
-        foreach (DataGridViewRow row in _grid.Rows)
-        {
-            int bit = (int)row.Tag!;
-            gridBindings.Add(bit, new ButtonAction
-            {
-                Kind = Enum.Parse<MappingKind>(
-                    row.Cells["Kind"].Value?.ToString() ?? "None"),
-                Parameter = row.Cells["Parameter"].Value?.ToString()?.Trim() ?? ""
-            });
-        }
-
+        CaptureLayerGrid();
         var updatedMacros = editor.Result.Select(m => m.Clone()).ToList();
         var renames = editor.Renames ??
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        BindingReconciliation mapped = MacroCatalogEdits.ReconcileBindings(
-            gridBindings, previousMacros.Select(m => m.Name).ToArray(),
-            updatedMacros, renames);
+        var updatedLayers = new Dictionary<int, Dictionary<int, ButtonAction>>();
+        int renamed = 0;
+        int cleared = 0;
+        foreach (int layer in new[] { 1, 2, 3 })
+        {
+            BindingReconciliation mapped = MacroCatalogEdits.ReconcileBindings(
+                _pendingLayerMaps[layer],
+                previousMacros.Select(m => m.Name).ToArray(),
+                updatedMacros, renames);
+            updatedLayers[layer] = mapped.Buttons;
+            renamed += mapped.RenamedBits.Count;
+            cleared += mapped.ClearedBits.Count;
+        }
 
-        if (mapped.ClearedBits.Count > 0 &&
+        if (cleared > 0 &&
             MessageBox.Show(this,
-                $"Deleting macros will remove assignments from " +
-                $"{mapped.ClearedBits.Count} G-key(s). Continue?",
+                $"Deleting macros will remove {cleared} G-key layer " +
+                "assignment(s). Continue?",
                 "Remove assigned macros", MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
 
-        // Only change the staged profile and grid AFTER all confirmations.
-        // Current().Macros stays untouched until a successful Save profile.
         _pendingMacros = updatedMacros;
-        _loading = true;
-        try
-        {
-            foreach (DataGridViewRow row in _grid.Rows)
-            {
-                int bit = (int)row.Tag!;
-                ButtonAction action = mapped.Buttons[bit];
-                row.Cells["Kind"].Value = action.Kind.ToString();
-                row.Cells["Kind"].Tag = action.Kind;
-                // Names may have been renamed, added or deleted. Rebuild the
-                // row-level combo box using the edited profile's macro list.
-                SetParameterCell(row, action.Kind, action.Parameter);
-            }
-        }
-        finally { _loading = false; }
-
+        _pendingLayerMaps = updatedLayers;
+        LoadLayerGrid();
         MarkDirty();
         _status.Text = "Macro changes staged. Save profile to persist them. " +
-            $"Updated {mapped.RenamedBits.Count} assignment(s); " +
-            $"cleared {mapped.ClearedBits.Count} deleted-macro assignment(s).";
+            $"Updated {renamed} layer assignment(s); " +
+            $"cleared {cleared} deleted-macro layer assignment(s).";
     }
 
     private bool SaveCurrentProfile()
@@ -491,8 +588,12 @@ public sealed class MainForm : Form
         if (_running) return false;
         try
         {
-            _grid.EndEdit();
+            CaptureLayerGrid();
             var replacement = Current().Clone(_currentName);
+            replacement.UseMappingLayers = _enableLayers.Checked;
+            replacement.Buttons = MappingProfile.CloneButtons(_pendingLayerMaps[1]);
+            replacement.M2Buttons = MappingProfile.CloneButtons(_pendingLayerMaps[2]);
+            replacement.M3Buttons = MappingProfile.CloneButtons(_pendingLayerMaps[3]);
             if (_pendingMacros is not null)
                 replacement.Macros = _pendingMacros.Select(m => m.Clone()).ToList();
             replacement.DeadzonePercent = (int)_deadzone.Value;
@@ -506,18 +607,6 @@ public sealed class MainForm : Form
                     StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Select(ExecutableProfileMatcher.NormalizeExecutableName)
                 .ToList();
-            replacement.Buttons.Clear();
-            foreach (DataGridViewRow row in _grid.Rows)
-            {
-                int bit = (int)row.Tag!;
-                string kindString = row.Cells["Kind"].Value?.ToString() ?? "None";
-                MappingKind kind = Enum.Parse<MappingKind>(kindString);
-                string parameter = row.Cells["Parameter"].Value?.ToString()?.Trim() ?? "";
-                replacement.Buttons[bit] = new ButtonAction
-                {
-                    Kind = kind, Parameter = parameter
-                };
-            }
             replacement.Validate();
 
             int index = _document.Profiles.FindIndex(p => string.Equals(
@@ -1152,6 +1241,8 @@ public sealed class MainForm : Form
         _useRgb.Enabled = !_running;
         _pickRgb.Enabled = !_running;
         _lcdStatus.Enabled = !_running;
+        _editLayer.Enabled = !_running && _enableLayers.Checked;
+        _enableLayers.Enabled = !_running;
         _grid.ReadOnly = _running;
         _start.Enabled = !_running && _devices.SelectedItem is not null;
         _stop.Enabled = _running;

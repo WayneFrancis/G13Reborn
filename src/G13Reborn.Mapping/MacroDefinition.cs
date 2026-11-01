@@ -114,7 +114,12 @@ public sealed class MacroDefinition
         Steps = Steps.Select(s => s.Clone()).ToList()
     };
 
-    public void Validate()
+    /// <summary>
+    /// The macro editor may validate an empty Steps draft immediately before
+    /// recording. Saving profiles and executing macros always use strict
+    /// validation (allowEmptySteps defaults to false).
+    /// </summary>
+    public void Validate(bool allowEmptySteps = false)
     {
         if (string.IsNullOrWhiteSpace(Name) || Name.Length > 100)
             throw new ArgumentException("Macro name must contain 1-100 characters.");
@@ -135,7 +140,7 @@ public sealed class MacroDefinition
         }
         else
         {
-            if (Steps.Count == 0)
+            if (Steps.Count == 0 && !allowEmptySteps)
                 throw new ArgumentException($"Sequence macro '{Name}' needs steps.");
             foreach (MacroStep step in Steps)
                 step.Validate();

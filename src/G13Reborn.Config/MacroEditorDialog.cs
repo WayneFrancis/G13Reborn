@@ -36,7 +36,23 @@ internal sealed class MacroEditorDialog : Form
     private readonly Button _stepDown = new() { Text = "Move down", AutoSize = true };
     private readonly Button _recordSteps = new()
     {
-        Text = "Record / replace steps...", AutoSize = true
+        Text = "Record / insert steps...", AutoSize = true
+    };
+    private readonly NumericUpDown _keyDownDelay = new()
+    {
+        Minimum = 0, Maximum = 60_000, Width = 65, Value = 25
+    };
+    private readonly NumericUpDown _keyUpDelay = new()
+    {
+        Minimum = 0, Maximum = 60_000, Width = 65, Value = 25
+    };
+    private readonly Button _applyKeyDownDelay = new()
+    {
+        Text = "Apply key-down", AutoSize = true
+    };
+    private readonly Button _applyKeyUpDelay = new()
+    {
+        Text = "Apply key-up", AutoSize = true
     };
     private bool _loading;
     private int _loadedIndex = -1;
@@ -78,7 +94,7 @@ internal sealed class MacroEditorDialog : Form
         var right = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, Padding = new Padding(10, 0, 0, 0),
-            RowCount = 7, ColumnCount = 1
+            RowCount = 8, ColumnCount = 1
         };
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
@@ -86,6 +102,7 @@ internal sealed class MacroEditorDialog : Form
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
         right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        right.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
         right.RowStyles.Add(new RowStyle(SizeType.Absolute, 53));
         var nameBar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
         nameBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95));
@@ -148,12 +165,34 @@ internal sealed class MacroEditorDialog : Form
             _addStep, _removeStep, _stepUp, _stepDown, _recordSteps
         });
         right.Controls.Add(stepButtons, 0, 5);
+
+        var timingBar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, WrapContents = false
+        };
+        timingBar.Controls.AddRange(new Control[]
+        {
+            new Label
+            {
+                Text = "After KeyDown (ms):", AutoSize = true,
+                Padding = new Padding(0, 7, 2, 0)
+            },
+            _keyDownDelay, _applyKeyDownDelay,
+            new Label
+            {
+                Text = "After KeyUp (ms):", AutoSize = true,
+                Padding = new Padding(10, 7, 2, 0)
+            },
+            _keyUpDelay, _applyKeyUpDelay
+        });
+        right.Controls.Add(timingBar, 0, 6);
         right.Controls.Add(new Label
         {
             Dock = DockStyle.Fill,
-            Text = "Step keys: A, F1, Ctrl, Shift, Enter...   Mouse: Left, Right, Middle. " +
-                "Use KeyDown/KeyUp for held shortcuts. Delay is 0–60000 ms."
-        }, 0, 6);
+            Text = "Select a step to record after it; clear selection to append. " +
+                "Each Apply button changes only matching keyboard steps. " +
+                "25ms after KeyDown + 25ms after KeyUp gives roughly 50ms per key cycle."
+        }, 0, 7);
         root.Controls.Add(right, 1, 0);
 
         var bottom = new FlowLayoutPanel
@@ -184,6 +223,10 @@ internal sealed class MacroEditorDialog : Form
         _recordSteps.Click += (_, _) => RecordSteps();
         _stepUp.Click += (_, _) => MoveStep(-1);
         _stepDown.Click += (_, _) => MoveStep(+1);
+        _applyKeyDownDelay.Click += (_, _) =>
+            ApplyTiming(MacroStepKind.KeyDown, (int)_keyDownDelay.Value);
+        _applyKeyUpDelay.Click += (_, _) =>
+            ApplyTiming(MacroStepKind.KeyUp, (int)_keyUpDelay.Value);
         save.Click += (_, _) => SaveClicked();
 
         RefreshList(_macros.Count > 0 ? 0 : -1);
@@ -222,6 +265,11 @@ internal sealed class MacroEditorDialog : Form
                 foreach (MacroStep step in _macros[index].Steps)
                     _steps.Rows.Add(step.Kind.ToString(), step.Parameter,
                         step.DelayAfterMs.ToString());
+            // DataGridView selects the first row automatically on load.
+            // That is NOT an explicit user selection. Leave it unselected
+            // so "Record / insert" appends by default.
+            _steps.ClearSelection();
+            _steps.CurrentCell = null;
             UpdateMode();
             _name.Enabled = _mode.Enabled = index >= 0;
         }
@@ -237,6 +285,8 @@ internal sealed class MacroEditorDialog : Form
         _steps.Enabled = active && !isText;
         _addStep.Enabled = _removeStep.Enabled = active && !isText;
         _stepUp.Enabled = _stepDown.Enabled = active && !isText;
+        _keyDownDelay.Enabled = _keyUpDelay.Enabled = active && !isText;
+        _applyKeyDownDelay.Enabled = _applyKeyUpDelay.Enabled = active && !isText;
         // It is valid to start recording while editing a Text macro.
         // Accepting converts that macro to Steps, without changing its name.
         _recordSteps.Enabled = active;
@@ -266,16 +316,65 @@ internal sealed class MacroEditorDialog : Form
         _steps.CurrentCell = _steps.Rows[other].Cells[0];
     }
 
+    private void ApplyTiming(MacroStepKind kind, int milliseconds)
+    {
+        if (_loadedIndex < 0 || _mode.SelectedItem?.ToString() != nameof(MacroMode.Steps))
+            return;
+        try
+        {
+            _steps.EndEdit();
+            var steps = ReadStepRows();
+            int changed = SequenceEditOperations.ApplyKeyboardDelay(
+                steps, kind, milliseconds);
+            for (int i = 0; i < steps.Count; i++)
+                _steps.Rows[i].Cells[2].Value = steps[i].DelayAfterMs.ToString();
+
+            MessageBox.Show(this,
+                changed == 0
+                    ? $"No {kind} actions to update."
+                    : $"Set delay after {changed} {kind} action(s) to {milliseconds} ms. " +
+                      "Click Save macros, then Save profile to persist the changes.",
+                "Sequence timing", MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message,
+                "Invalid sequence", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private List<MacroStep> ReadStepRows()
+    {
+        _steps.EndEdit();
+        var steps = new List<MacroStep>();
+        foreach (DataGridViewRow row in _steps.Rows)
+        {
+            var step = new MacroStep
+            {
+                Kind = Enum.Parse<MacroStepKind>(
+                    row.Cells[0].Value?.ToString() ?? "Delay"),
+                Parameter = row.Cells[1].Value?.ToString()?.Trim() ?? "",
+                DelayAfterMs = int.Parse(row.Cells[2].Value?.ToString() ?? "0")
+            };
+            step.Validate();
+            steps.Add(step);
+        }
+        return steps;
+    }
+
     private void RecordSteps()
     {
-        if (_loadedIndex < 0 || !CommitCurrent())
+        if (_loadedIndex < 0)
             return;
 
-        if (_macros[_loadedIndex].Steps.Count > 0 &&
-            MessageBox.Show(this,
-                "Replace the selected macro's existing sequence steps with " +
-                "the new recording?", "Replace sequence",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        // Capture selection BEFORE committing the grid: the validation
+        // process can change focus and thus DataGridView.CurrentRow.
+        int? selectedIndex = _steps.CurrentRow?.Index;
+
+        // A newly created Steps macro is allowed to have zero steps here.
+        // Validation remains strict when saving a finished macro.
+        if (!CommitCurrent(allowEmptySequence: true))
             return;
 
         using var recorder = new MacroRecorderDialog();
@@ -284,20 +383,39 @@ internal sealed class MacroEditorDialog : Form
         if (response != DialogResult.OK || recorded is null || recorded.Count == 0)
             return;
 
-        var macro = _macros[_loadedIndex].Clone();
-        macro.Mode = MacroMode.Steps;
-        macro.Steps = recorded.Select(step => step.Clone()).ToList();
-        macro.Validate();
-        _macros[_loadedIndex] = macro;
-        LoadMacro(_loadedIndex);
-        MessageBox.Show(this,
-            $"Recorded {recorded.Count} steps. You can edit timings or " +
-            "actions in the grid. Use Save macros, then Save profile " +
-            "to persist the recording.",
-            "Recording captured", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        try
+        {
+            var macro = _macros[_loadedIndex].Clone();
+            macro.Mode = MacroMode.Steps;
+            macro.Steps = SequenceEditOperations.InsertRecording(
+                macro.Steps, recorded, selectedIndex);
+            macro.Validate();
+
+            _macros[_loadedIndex] = macro;
+            LoadMacro(_loadedIndex);
+            int insertAt = selectedIndex.HasValue
+                ? selectedIndex.Value + 1 : macro.Steps.Count - recorded.Count;
+            if (insertAt >= 0 && insertAt < _steps.Rows.Count)
+                _steps.CurrentCell = _steps.Rows[insertAt].Cells[0];
+
+            MessageBox.Show(this,
+                $"Inserted {recorded.Count} step(s) " +
+                (selectedIndex.HasValue
+                    ? $"after step {selectedIndex.Value + 1}."
+                    : "at the end of the macro.") +
+                " Existing steps were preserved. You can adjust delays " +
+                "before clicking Save macros, then Save profile.",
+                "Recording inserted", MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Could not insert recording",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
-    private bool CommitCurrent()
+    private bool CommitCurrent(bool allowEmptySequence = false)
     {
         if (_loadedIndex < 0) return true;
         try
@@ -308,19 +426,8 @@ internal sealed class MacroEditorDialog : Form
             macro.Mode = Enum.Parse<MacroMode>(_mode.SelectedItem?.ToString() ?? "Text");
             macro.Text = _text.Text;
             macro.TextDelayMs = (int)_textDelay.Value;
-            macro.Steps.Clear();
-
-            foreach (DataGridViewRow row in _steps.Rows)
-            {
-                var step = new MacroStep
-                {
-                    Kind = Enum.Parse<MacroStepKind>(row.Cells[0].Value?.ToString() ?? "Delay"),
-                    Parameter = row.Cells[1].Value?.ToString()?.Trim() ?? "",
-                    DelayAfterMs = int.Parse(row.Cells[2].Value?.ToString() ?? "0")
-                };
-                macro.Steps.Add(step);
-            }
-            macro.Validate();
+            macro.Steps = ReadStepRows();
+            macro.Validate(allowEmptySteps: allowEmptySequence);
             if (_macros.Where((_, index) => index != _loadedIndex).Any(m =>
                 string.Equals(m.Name, macro.Name, StringComparison.OrdinalIgnoreCase)))
                 throw new ArgumentException($"Macro '{macro.Name}' already exists.");

@@ -2,6 +2,9 @@ namespace G13Reborn.Mapping;
 
 public enum MacroMode { Text, Steps }
 
+/// <summary>When an assigned physical G-key should repeat a macro.</summary>
+public enum MacroRepeatMode { Once, WhileHeld, Toggle }
+
 public enum MacroStepKind
 {
     Delay,
@@ -106,11 +109,14 @@ public sealed class MacroDefinition
     /// Explicit values 5..100 tune pacing for the focused application.
     /// </summary>
     public int TextDelayMs { get; set; } = 25;
+    /// <summary>Defaults to Once for all existing profile JSON files.</summary>
+    public MacroRepeatMode RepeatMode { get; set; } = MacroRepeatMode.Once;
     public List<MacroStep> Steps { get; set; } = new();
 
     public MacroDefinition Clone() => new()
     {
         Name = Name, Mode = Mode, Text = Text, TextDelayMs = TextDelayMs,
+        RepeatMode = RepeatMode,
         Steps = Steps.Select(s => s.Clone()).ToList()
     };
 
@@ -125,6 +131,8 @@ public sealed class MacroDefinition
             throw new ArgumentException("Macro name must contain 1-100 characters.");
         if (!Enum.IsDefined(Mode))
             throw new ArgumentException($"Invalid macro mode {Mode}.");
+        if (!Enum.IsDefined(RepeatMode))
+            throw new ArgumentException($"Invalid macro repeat mode {RepeatMode}.");
         if (Text is null || Text.Length > 10_000)
             throw new ArgumentException("Macro text cannot exceed 10000 characters.");
         if (TextDelayMs is < 0 or > 100 ||
@@ -149,10 +157,12 @@ public sealed class MacroDefinition
 }
 
 /// <summary>
-/// A macro plays at most once per transition from released to pressed.
-/// Calls to Reset happen on profile change and must be paired with the
-/// held-button release gate so held controls cannot retrigger.
+/// Detects press AND release transitions for assigned G-keys.
+/// Profile changes replace the detector and the held-button release gate
+/// prevents held controls from retriggering in the new profile.
 /// </summary>
+public sealed record MacroButtonTransition(int Bit, string MacroName, bool IsPressed);
+
 public sealed class MacroTriggerDetector
 {
     private readonly Dictionary<int, string> _macroAssignments;
@@ -166,17 +176,24 @@ public sealed class MacroTriggerDetector
             .ToDictionary(x => x.Key, x => x.Value.Parameter);
     }
 
-    public IReadOnlyList<string> Detect(G13Reborn.Device.G13InputReport report)
+    public IReadOnlyList<MacroButtonTransition> DetectTransitions(
+        G13Reborn.Device.G13InputReport report)
     {
-        var triggered = new List<string>();
+        ArgumentNullException.ThrowIfNull(report);
+        var transitions = new List<MacroButtonTransition>();
         foreach (var (bit, name) in _macroAssignments)
         {
-            bool held = report.IsPhysicalBitPressed(bit);
-            if (held && _previous.Add(bit))
-                triggered.Add(name);
-            else if (!held)
-                _previous.Remove(bit);
+            bool pressed = report.IsPhysicalBitPressed(bit);
+            if (pressed && _previous.Add(bit))
+                transitions.Add(new MacroButtonTransition(bit, name, true));
+            else if (!pressed && _previous.Remove(bit))
+                transitions.Add(new MacroButtonTransition(bit, name, false));
         }
-        return triggered;
+        return transitions;
     }
+
+    /// <summary>Compatibility helper: press edges only.</summary>
+    public IReadOnlyList<string> Detect(G13Reborn.Device.G13InputReport report) =>
+        DetectTransitions(report).Where(t => t.IsPressed)
+            .Select(t => t.MacroName).ToArray();
 }

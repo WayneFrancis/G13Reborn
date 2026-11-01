@@ -454,11 +454,14 @@ internal sealed class MacroEditorDialog : Form
 
         ClearStepSelection();
         if (selectedCount <= 0) return;
+        // Setting CurrentCell can clear a prior multi-row selection.
+        // Set it FIRST, then explicitly select the whole inserted block,
+        // so another paste will go after its final row.
+        if (firstSelection >= 0 && firstSelection < _steps.Rows.Count)
+            _steps.CurrentCell = _steps.Rows[firstSelection].Cells[0];
         for (int i = firstSelection;
              i < Math.Min(_steps.Rows.Count, firstSelection + selectedCount); i++)
             _steps.Rows[i].Selected = true;
-        if (firstSelection >= 0 && firstSelection < _steps.Rows.Count)
-            _steps.CurrentCell = _steps.Rows[firstSelection].Cells[0];
         UpdateSelectionInfo();
     }
 

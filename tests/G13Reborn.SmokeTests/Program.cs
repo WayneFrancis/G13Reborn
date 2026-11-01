@@ -1341,9 +1341,12 @@ Console.WriteLine("X-button input and opt-in RGB/LCD profile tests passed.");
 var m1Frame = new byte[] { 1, 127, 127, 0, 0, 0, 0b0010_0000, 0 };
 var m2Frame = new byte[] { 1, 127, 127, 0, 0, 0, 0b0100_0000, 0 };
 var m3Frame = new byte[] { 1, 127, 127, 0, 0, 0, 0b1000_0000, 0 };
-Check(G13InputReport.TryParse(m1Frame, out var m1Input) && m1Input is not null &&
-      G13InputReport.TryParse(m2Frame, out var m2Input) && m2Input is not null &&
-      G13InputReport.TryParse(m3Frame, out var m3Input) && m3Input is not null,
+bool m1Parsed = G13InputReport.TryParse(m1Frame, out var m1Input);
+bool m2Parsed = G13InputReport.TryParse(m2Frame, out var m2Input);
+bool m3Parsed = G13InputReport.TryParse(m3Frame, out var m3Input);
+Check(m1Parsed && m1Input is not null &&
+      m2Parsed && m2Input is not null &&
+      m3Parsed && m3Input is not null,
     "all three M-mode selector reports parse");
 Check(m1Input!.IsPhysicalBitPressed(G13MappingLayers.M1Bit) &&
       m2Input!.IsPhysicalBitPressed(G13MappingLayers.M2Bit) &&
@@ -1353,18 +1356,18 @@ Check(G13MappingLayers.SelectorBits.SequenceEqual(new[] { 29, 30, 31 }),
     "mode selectors cover exactly M1/M2/M3 (not MR)");
 
 var modeDetector = new G13LayerSelector();
-Check(modeDetector.Detect(m2Input) == 2,
+Check(modeDetector.Detect(m2Input!) == 2,
     "M2 rising edge activates layer 2");
-Check(modeDetector.Detect(m2Input) is null,
+Check(modeDetector.Detect(m2Input!) is null,
     "held M2 does not continually reactivate its layer");
 Check(modeDetector.Detect(emptyReport!) is null &&
-      modeDetector.Detect(m3Input) == 3,
+      modeDetector.Detect(m3Input!) == 3,
     "releasing and pressing M3 activates layer 3");
-modeDetector.Seed(m1Input);
-Check(modeDetector.Detect(m1Input) is null,
+modeDetector.Seed(m1Input!);
+Check(modeDetector.Detect(m1Input!) is null,
     "seeding the detector prevents a held M1 key from reactivating after a profile switch");
 Check(modeDetector.Detect(emptyReport!) is null &&
-      modeDetector.Detect(m1Input) == 1,
+      modeDetector.Detect(m1Input!) == 1,
     "M1 is selectable again after physical release and fresh press");
 
 var mMode = new MappingProfile { Name = "M-layer test", UseMappingLayers = true };
@@ -1392,7 +1395,7 @@ Check(m2Engine.ReleaseAll().SequenceEqual(new[]
 }), "layer switching can release the previous layer's held keyboard input");
 var noMkeys = G13MappingLayers.WithoutModeKeys(m2Input);
 Check(!noMkeys.IsPhysicalBitPressed(G13MappingLayers.M2Bit) &&
-      m2Input.IsPhysicalBitPressed(G13MappingLayers.M2Bit),
+      m2Input!.IsPhysicalBitPressed(G13MappingLayers.M2Bit),
     "input filtering removes M mode controls without modifying the original HID report");
 var preservedMr = new byte[] { 1, 127, 127, 0, 0, 0, 0, 0b0000_0001 };
 G13InputReport.TryParse(preservedMr, out var mrInput);

@@ -936,3 +936,50 @@ Check(persistedManagedProfile.Macros[0].Name == "AdvMacro" &&
       stagingProfile.Macros[0].Name == "AdvMacro v2",
     "Editing a cloned pending profile cannot change unsaved persisted macro bindings");
 Console.WriteLine("Macro duplication, rename, assignment and staged-save tests passed.");
+
+
+// Main mapping grid: only Macro actions are dropdown-bound to the current
+// profile's macro list; other mappings keep free-form parameter text.
+var macroOptions = new List<MacroDefinition>
+{
+    new() { Name = "Zebra", Mode = MacroMode.Text, Text = "z" },
+    new() { Name = "alpha", Mode = MacroMode.Text, Text = "a" },
+    new() { Name = "Bravo", Mode = MacroMode.Text, Text = "b" }
+};
+var sortedMacroNames = MappingParameterChoices.MacroNames(macroOptions);
+Check(sortedMacroNames.SequenceEqual(new[] { "alpha", "Bravo", "Zebra" }),
+    "macro dropdown sorts only names from current profile");
+Check(MappingParameterChoices.ExistingMacroChoice(
+    "ALPHA", sortedMacroNames) == "alpha",
+    "macro dropdown canonicalizes case-insensitive existing assignments");
+Check(MappingParameterChoices.ExistingMacroChoice(
+    "macro in different profile", sortedMacroNames) == "",
+    "macro dropdown does not allow names from other profiles");
+Check(MappingParameterChoices.ExistingMacroChoice(
+    "", sortedMacroNames) == "",
+    "macro dropdown supports unassigned blank during editing");
+Check(MappingParameterChoices.MacroNames(
+    Array.Empty<MacroDefinition>()).Length == 0,
+    "empty profile has no selectable macro names");
+Check(MappingParameterChoices.ParameterAfterKindChange(
+    MappingKind.Keyboard, MappingKind.Macro, "Ctrl+A") == "",
+    "changing a key chord to Macro clears incompatible parameter text");
+Check(MappingParameterChoices.ParameterAfterKindChange(
+    MappingKind.Macro, MappingKind.Keyboard, "Zebra") == "",
+    "changing Macro to a keyboard mapping clears the old macro name");
+Check(MappingParameterChoices.ParameterAfterKindChange(
+    MappingKind.Keyboard, MappingKind.Keyboard, "Ctrl+A") == "Ctrl+A",
+    "retaining Keyboard keeps its existing chord");
+Check(MappingParameterChoices.ParameterAfterKindChange(
+    MappingKind.Macro, MappingKind.Macro, "Zebra") == "Zebra",
+    "refreshing an existing Macro action preserves its selected name");
+
+var laterEdited = new List<MacroDefinition>
+{
+    new() { Name = "New name", Mode = MacroMode.Text, Text = "typed" }
+};
+var laterChoices = MappingParameterChoices.MacroNames(laterEdited);
+Check(MappingParameterChoices.ExistingMacroChoice("Old name", laterChoices) == "" &&
+      MappingParameterChoices.ExistingMacroChoice("New name", laterChoices) == "New name",
+    "macro dropdown refresh removes deleted or renamed names and accepts new names");
+Console.WriteLine("Profile macro dropdown option/transition tests passed.");

@@ -327,3 +327,23 @@ staged changes rather than accidentally writing them to disk.
 **Cancel** or closing the Macro Editor now warns before discarding
 unsaved macro edits, including changes not yet committed from individual
 fields or step cells. You can keep editing instead of losing changes.
+
+
+## Main G-key mapping macro dropdown
+
+In the main **Profiles & Input Mapping** grid, changing **Output action**
+to **Macro** changes that row's **Key chord / vJoy # / Macro** cell
+into a dropdown. The list includes macro names defined in the **current
+profile**, sorted alphabetically. It does not display macros from other
+profiles. Existing Macro assignments are displayed as their selected
+name; switching from a keyboard mapping to Macro clears its incompatible
+old key-chord value.
+
+Create, rename, duplicate or delete macros through **Edit macros...**.
+When you accept the editor, the dropdowns are updated immediately from
+the staged macro definitions (even before **Save profile**). Renamed
+assignments keep their new name; deleted assignments are cleared after
+confirmation. If no macro exists, the dropdown has no macro names yet:
+create one in **Edit macros...** first. Empty selections remain invalid
+for saving a Macro assignment, rather than silently choosing a macro.
+All non-Macro actions retain ordinary editable parameter text.

@@ -45,6 +45,7 @@ internal sealed class G13HardwareDialog : Form
     };
     private readonly Button _rgbApply = new() { Text = "Apply RGB", AutoSize = true };
     private readonly Button _ledApply = new() { Text = "Apply M LEDs", AutoSize = true };
+    private readonly Button _readLeds = new() { Text = "Read LEDs", AutoSize = true };
     private readonly Button _testLcd = new() { Text = "Send test pattern", AutoSize = true };
     private readonly Button _clearLcd = new() { Text = "Clear LCD", AutoSize = true };
 
@@ -79,9 +80,10 @@ internal sealed class G13HardwareDialog : Form
             Text = "Experimental G13 hardware output. Select the HID collection " +
                 "with a FEATURE report for the RGB/M LEDs, or the collection with a " +
                 "992-byte OUT report for the 160×43 LCD.\r\n" +
-                "Stop G13 forwarding first. Logitech Gaming Software can hold " +
-                "an output interface or overwrite the display. " +
-                "No changes are sent until you press a hardware button."
+                "Stop forwarding and fully quit LGS from its tray icon before testing. " +
+                "LGS can overwrite our LCD/LED state when M1/M2/M3 is pressed.\r\n" +
+                "Checkboxes stage an LED mask; click Apply M LEDs to send it. " +
+                "Read LEDs queries the device without changing its state."
         };
         root.Controls.Add(explanation, 0, 0);
 
@@ -108,7 +110,7 @@ internal sealed class G13HardwareDialog : Form
         });
         ledRow.Controls.AddRange(new Control[]
         {
-            _m1, _m2, _m3, _mr, _ledApply
+            _m1, _m2, _m3, _mr, _ledApply, _readLeds
         });
         root.Controls.Add(ledRow, 0, 3);
 
@@ -148,6 +150,7 @@ internal sealed class G13HardwareDialog : Form
         };
         _rgbApply.Click += (_, _) => ApplyRgb();
         _ledApply.Click += (_, _) => ApplyLeds();
+        _readLeds.Click += (_, _) => ReadLeds();
         _testLcd.Click += async (_, _) =>
             await SendLcdAsync(G13HardwareReports.TestPattern(), "Test pattern sent.");
         _clearLcd.Click += async (_, _) =>
@@ -175,7 +178,8 @@ internal sealed class G13HardwareDialog : Form
             }
             SelectInterface(_feature, featurePath);
             SelectInterface(_lcd, lcdPath);
-            _rgbApply.Enabled = _ledApply.Enabled = _feature.SelectedItem is not null;
+            _rgbApply.Enabled = _ledApply.Enabled = _readLeds.Enabled =
+                _feature.SelectedItem is not null;
             _testLcd.Enabled = _clearLcd.Enabled = _lcd.SelectedItem is not null;
             _result.Text = $"Found {_feature.Items.Count} feature collection(s) and " +
                 $"{_lcd.Items.Count} LCD collection(s).";
@@ -207,13 +211,48 @@ internal sealed class G13HardwareDialog : Form
     private void ApplyLeds()
     {
         if (_feature.SelectedItem is not InterfaceOption output) return;
+        byte wanted = G13HardwareReports.MacroLeds(
+            _m1.Checked, _m2.Checked, _m3.Checked, _mr.Checked)[1];
         try
         {
             G13OutputDevice.SetMacroLeds(output.Device,
                 _m1.Checked, _m2.Checked, _m3.Checked, _mr.Checked);
-            _result.Text = "Sent M1/M2/M3/MR LED states.";
         }
-        catch (Exception ex) { ShowError("Macro LEDs failed", ex); }
+        catch (Exception ex)
+        {
+            ShowError("Macro LEDs failed", ex);
+            return;
+        }
+
+        try
+        {
+            byte actual = G13OutputDevice.ReadMacroLedMask(output.Device);
+            _result.Text = actual == wanted
+                ? $"Wrote M LEDs 0x{wanted:X2}; read back 0x{actual:X2} (match)."
+                : $"Wrote M LEDs 0x{wanted:X2}; read back 0x{actual:X2} " +
+                  "(different — another program may be changing them).";
+        }
+        catch (Exception ex)
+        {
+            _result.Text = $"Wrote M LEDs 0x{wanted:X2}, but device readback " +
+                $"is unavailable: {ex.Message}";
+        }
+    }
+
+    private void ReadLeds()
+    {
+        if (_feature.SelectedItem is not InterfaceOption output) return;
+        try
+        {
+            byte mask = G13OutputDevice.ReadMacroLedMask(output.Device);
+            _m1.Checked = (mask & 0x01) != 0;
+            _m2.Checked = (mask & 0x02) != 0;
+            _m3.Checked = (mask & 0x04) != 0;
+            _mr.Checked = (mask & 0x08) != 0;
+            _result.Text = $"Device LED mask: 0x{mask:X2}. " +
+                "Checkboxes updated to the reported state; no command sent.";
+        }
+        catch (Exception ex) { ShowError("Read M LEDs failed", ex); }
     }
 
     private async Task SendLcdAsync(byte[] frame, string success)

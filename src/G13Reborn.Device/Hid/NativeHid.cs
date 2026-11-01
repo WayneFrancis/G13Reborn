@@ -188,6 +188,22 @@ internal static class NativeHid
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool HidD_GetFeature(SafeFileHandle device, [In, Out] byte[] report, int reportLength);
 
+    internal static SafeFileHandle OpenForFeatureRead(string path)
+    {
+        if (!path.Contains("vid_046d&pid_c21c",
+            StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Invalid Logitech G13 device path.", nameof(path));
+        var handle = CreateFile(path, GenericRead, ShareReadWrite,
+            IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new Win32Exception(error, "Could not read G13 feature data.");
+        }
+        return handle;
+    }
+
     internal static void GetFeature(SafeFileHandle handle, byte[] report)
     {
         if (!HidD_GetFeature(handle, report, report.Length))

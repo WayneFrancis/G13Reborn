@@ -30,6 +30,10 @@ public sealed class MappingProfile
 {
     public string Name { get; set; } = "Default";
     public Dictionary<int, ButtonAction> Buttons { get; set; } = new();
+    /// <summary>Opt-in M1/M2/M3 mapping layers. Old profiles remain single-layer.</summary>
+    public bool UseMappingLayers { get; set; }
+    public Dictionary<int, ButtonAction> M2Buttons { get; set; } = new();
+    public Dictionary<int, ButtonAction> M3Buttons { get; set; } = new();
     /// <summary>Executable file names, e.g. notepad.exe, that activate this profile.</summary>
     public List<string> ExecutableNames { get; set; } = new();
     /// <summary>Macros are owned by their profile and saved with it.</summary>
@@ -66,20 +70,39 @@ public sealed class MappingProfile
         return new MappingProfile
         {
             Name = name,
+            UseMappingLayers = UseMappingLayers,
+            M2Buttons = CloneButtons(M2Buttons),
+            M3Buttons = CloneButtons(M3Buttons),
             DeadzonePercent = DeadzonePercent,
             InvertY = InvertY,
             UseProfileRgb = UseProfileRgb,
             ProfileRgb = ProfileRgb,
             ExecutableNames = new List<string>(ExecutableNames),
             Macros = Macros.Select(m => m.Clone()).ToList(),
-            Buttons = Buttons.ToDictionary(
-                entry => entry.Key,
-                entry => new ButtonAction
-                {
-                    Kind = entry.Value.Kind,
-                    Parameter = entry.Value.Parameter
-                })
+            Buttons = CloneButtons(Buttons)
         };
+    }
+
+    public static Dictionary<int, ButtonAction> CloneButtons(
+        IReadOnlyDictionary<int, ButtonAction> buttons) =>
+        buttons.ToDictionary(entry => entry.Key,
+            entry => new ButtonAction
+            {
+                Kind = entry.Value.Kind, Parameter = entry.Value.Parameter
+            });
+
+    /// <summary>Construct an independent mapping for forwarding.</summary>
+    public MappingProfile ForLayer(int layer)
+    {
+        if (layer is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(layer));
+        var result = Clone(Name);
+        result.Buttons = CloneButtons(layer switch
+        {
+            2 when UseMappingLayers => M2Buttons,
+            3 when UseMappingLayers => M3Buttons,
+            _ => Buttons
+        });
+        return result;
     }
 
     public void Validate()
@@ -104,7 +127,19 @@ public sealed class MappingProfile
         if (normalizedNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() !=
             normalizedNames.Count)
             throw new ArgumentException($"Profile '{Name}' contains duplicate executable names.");
-        foreach (var (bit, action) in Buttons)
+        ValidateBindings(Buttons, "M1");
+        // Keep dormant layers valid too, so switching on layers later
+        // cannot activate a malformed or dangling macro assignment.
+        ValidateBindings(M2Buttons, "M2");
+        ValidateBindings(M3Buttons, "M3");
+    }
+
+    private void ValidateBindings(
+        IReadOnlyDictionary<int, ButtonAction> bindings, string layer)
+    {
+        if (bindings is null)
+            throw new ArgumentException($"Profile '{Name}' has null {layer} bindings.");
+        foreach (var (bit, action) in bindings)
         {
             if (bit is < 0 or >= 40)
                 throw new ArgumentException($"Invalid physical input bit {bit}.");
@@ -116,11 +151,11 @@ public sealed class MappingProfile
                 !Macros.Any(m => string.Equals(m.Name, action.Parameter,
                     StringComparison.OrdinalIgnoreCase)))
                 throw new ArgumentException(
-                    $"Physical bit {bit}: macro '{action.Parameter}' was not found in profile '{Name}'.");
+                    $"{layer} bit {bit}: macro '{action.Parameter}' was not found in profile '{Name}'.");
             if (action.Kind == MappingKind.VJoyButton &&
                 (!int.TryParse(action.Parameter, out int n) || n is < 1 or > 32))
                 throw new ArgumentException(
-                    $"Physical bit {bit}: vJoy button must be 1-32.");
+                    $"{layer} bit {bit}: vJoy button must be 1-32.");
         }
     }
 

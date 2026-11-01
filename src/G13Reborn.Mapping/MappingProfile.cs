@@ -36,6 +36,10 @@ public sealed class MappingProfile
     public List<MacroDefinition> Macros { get; set; } = new();
     public int DeadzonePercent { get; set; } = 10;
     public bool InvertY { get; set; }
+    /// <summary>Opt-in backlight setting, applied only while forwarding.</summary>
+    public bool UseProfileRgb { get; set; }
+    /// <summary>24-bit RGB value (0xRRGGBB). The default is the G13Reborn green.</summary>
+    public uint ProfileRgb { get; set; } = 0x5AFF6E;
 
     public static MappingProfile CreateDefault(string name = "Default")
     {
@@ -64,6 +68,8 @@ public sealed class MappingProfile
             Name = name,
             DeadzonePercent = DeadzonePercent,
             InvertY = InvertY,
+            UseProfileRgb = UseProfileRgb,
+            ProfileRgb = ProfileRgb,
             ExecutableNames = new List<string>(ExecutableNames),
             Macros = Macros.Select(m => m.Clone()).ToList(),
             Buttons = Buttons.ToDictionary(
@@ -82,6 +88,8 @@ public sealed class MappingProfile
             throw new ArgumentException("Profile name is required.");
         if (DeadzonePercent is < 0 or > 30)
             throw new ArgumentException("Deadzone must be between 0 and 30%.");
+        if (ProfileRgb > 0xFFFFFF)
+            throw new ArgumentException("Profile backlight colour must be 24-bit RGB.");
         if (ExecutableNames is null)
             throw new ArgumentException("Executable associations cannot be null.");
         if (Macros is null)
@@ -136,6 +144,8 @@ public sealed class ProfilesDocument
 {
     public string SelectedProfile { get; set; } = "Default";
     public bool AutoSwitchEnabled { get; set; }
+    /// <summary>Opt-in live G13 LCD profile, clock and macro status output.</summary>
+    public bool LcdStatusEnabled { get; set; }
     public List<MappingProfile> Profiles { get; set; } = new() { MappingProfile.CreateDefault() };
 }
 

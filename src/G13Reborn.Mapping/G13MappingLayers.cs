@@ -37,5 +37,15 @@ public sealed class G13LayerSelector
         return null;
     }
 
+    /// <summary>Remember already-held selectors without activating a layer.</summary>
+    public void Seed(G13InputReport? report)
+    {
+        if (report is null) { Reset(); return; }
+        _previousMask =
+            (report.IsPhysicalBitPressed(G13MappingLayers.M1Bit) ? 1 : 0) |
+            (report.IsPhysicalBitPressed(G13MappingLayers.M2Bit) ? 2 : 0) |
+            (report.IsPhysicalBitPressed(G13MappingLayers.M3Bit) ? 4 : 0);
+    }
+
     public void Reset() => _previousMask = 0;
 }

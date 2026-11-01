@@ -223,3 +223,29 @@ Time spent moving the mouse back to the recorder is not added to the end
 of the sequence. When an actual key/mouse button is still held at Stop,
 the recorder inserts a matching release with at most a 25 ms delay instead
 of waiting for the user-interface click time.
+
+
+## Testing a macro without G13 forwarding
+
+In **Edit macros...**, choose a Text or Steps macro, make changes, and click
+**Test macro...**. The test uses the current **unsaved** macro editor values;
+it does **not** write JSON, change mappings or require assigning a G-key.
+The main forwarding service must be stopped while the editor is open.
+
+A small **Test macro** window provides a three-second countdown. Switch
+to a disposable target document such as Notepad. The test waits until
+some other application, not G13Reborn, has foreground focus before it
+begins sending input. **The test generates real keyboard/mouse events**,
+so do not test dangerous shortcuts or click macros in important applications.
+
+Click **Cancel test** (or close the test window) at any time: pending
+steps are cancelled, and every key/mouse button held by the test is
+released. Playback also releases any held inputs on natural completion or
+on an input injection error. A safety timeout ends tests after two
+minutes. This is an independent test output channel; normal HID/vJoy
+forwarding is not started and profile state is not modified.
+
+Text tests use the existing reliable 25 ms default character pacing,
+while sequence tests use their configured delays and step ordering.
+Keyboard events in elevated programs and raw-input games may not
+respond to Windows SendInput; Notepad is the initial recommended target.

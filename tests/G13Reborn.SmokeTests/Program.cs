@@ -544,3 +544,124 @@ Check(shortMouseRelease.Count == 2 &&
       shortMouseRelease[1].Kind == MacroStepKind.MouseUp,
     "unfinished genuine mouse press releases without long Stop-button delay");
 Console.WriteLine("Recorder Stop button isolation and final-delay regressions passed.");
+
+
+// Editor-driven preview tests. No native Windows input is emitted: the runner
+// receives delegates so cancellation and cleanup can be tested deterministically.
+var previewOutput = new List<InputEvent>();
+var previewText = new List<string>();
+var preview = new MacroPreviewRunner(previewOutput.Add, previewText.Add);
+var simplePreview = new MacroDefinition
+{
+    Name = "Preview text", Mode = MacroMode.Text, Text = "Z"
+};
+await preview.RunAsync(simplePreview);
+Check(previewText.SequenceEqual(new[] { "Z" }) &&
+      previewOutput.Count == 0 && !preview.IsRunning,
+    "editor preview sends text through the injected output callback");
+preview.Cancel();
+Check(previewOutput.Count == 0,
+    "cancelling an already completed preview is a no-op");
+
+// A long KeyDown must be released immediately when the preview is cancelled,
+// even though the KeyUp step was never reached.
+var heldPreview = new MacroDefinition
+{
+    Name = "Held Ctrl", Mode = MacroMode.Steps,
+    Steps = new()
+    {
+        new() { Kind = MacroStepKind.KeyDown, Parameter = "Ctrl", DelayAfterMs = 30_000 },
+        new() { Kind = MacroStepKind.KeyUp, Parameter = "Ctrl" },
+        new() { Kind = MacroStepKind.KeyPress, Parameter = "Z" }
+    }
+};
+previewOutput.Clear();
+Task heldTask = preview.RunAsync(heldPreview);
+Check(preview.IsRunning &&
+      previewOutput.SequenceEqual(new[]
+      {
+          new InputEvent(InputEventKind.KeyDown, 0x11)
+      }), "preview starts with a held Ctrl input");
+
+bool overlapRejected = false;
+try { await preview.RunAsync(simplePreview); }
+catch (InvalidOperationException) { overlapRejected = true; }
+Check(overlapRejected, "concurrent macro tests are rejected");
+
+preview.Cancel();
+bool previewCancelled = false;
+try { await heldTask; }
+catch (OperationCanceledException) { previewCancelled = true; }
+Check(previewCancelled && !preview.IsRunning &&
+      previewOutput.SequenceEqual(new[]
+      {
+          new InputEvent(InputEventKind.KeyDown, 0x11),
+          new InputEvent(InputEventKind.KeyUp, 0x11)
+      }), "cancel during a long key hold immediately releases Ctrl and suppresses later steps");
+
+var mousePreview = new MacroDefinition
+{
+    Name = "Mouse preview", Mode = MacroMode.Steps,
+    Steps = new()
+    {
+        new() { Kind = MacroStepKind.MouseClick, Parameter = "Left" }
+    }
+};
+previewOutput.Clear();
+Task mouseTask = preview.RunAsync(mousePreview);
+Check(previewOutput.Count == 1 &&
+      previewOutput[0] == new InputEvent(
+          InputEventKind.MouseDown, (int)MouseControl.Left),
+    "mouse preview emits the button-down before click delay");
+preview.Cancel();
+bool mouseCancelled = false;
+try { await mouseTask; }
+catch (OperationCanceledException) { mouseCancelled = true; }
+Check(mouseCancelled && previewOutput.Count == 2 &&
+      previewOutput[1] == new InputEvent(
+          InputEventKind.MouseUp, (int)MouseControl.Left),
+    "cancel during mouse click releases the button exactly once");
+
+var unfinishedPreview = new MacroDefinition
+{
+    Name = "Unbalanced preview", Mode = MacroMode.Steps,
+    Steps = new()
+    {
+        new() { Kind = MacroStepKind.KeyDown, Parameter = "Ctrl" },
+        new() { Kind = MacroStepKind.MouseDown, Parameter = "Right" }
+    }
+};
+previewOutput.Clear();
+await preview.RunAsync(unfinishedPreview);
+Check(previewOutput.Count == 4 &&
+      previewOutput[2] == new InputEvent(
+          InputEventKind.KeyUp, 0x11) &&
+      previewOutput[3] == new InputEvent(
+          InputEventKind.MouseUp, (int)MouseControl.Right),
+    "normal preview completion releases all deliberately unbalanced held inputs");
+
+var errorOutput = new List<InputEvent>();
+var failingPreview = new MacroPreviewRunner(e =>
+{
+    errorOutput.Add(e);
+    if (e.Kind == InputEventKind.KeyDown)
+        throw new InvalidOperationException("Simulated injection failure");
+}, _ => { });
+var errorMacro = new MacroDefinition
+{
+    Name = "Failing preview", Mode = MacroMode.Steps,
+    Steps = new()
+    {
+        new() { Kind = MacroStepKind.KeyDown, Parameter = "A" }
+    }
+};
+bool errorPropagated = false;
+try { await failingPreview.RunAsync(errorMacro); }
+catch (InvalidOperationException) { errorPropagated = true; }
+Check(errorPropagated && !failingPreview.IsRunning &&
+      errorOutput.SequenceEqual(new[]
+      {
+          new InputEvent(InputEventKind.KeyDown, 0x41),
+          new InputEvent(InputEventKind.KeyUp, 0x41)
+      }), "output failure still triggers a best-effort key release");
+Console.WriteLine("Direct macro preview, cancellation, and held-input cleanup tests passed.");

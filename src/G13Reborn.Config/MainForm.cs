@@ -182,7 +182,7 @@ public sealed class MainForm : Form
         _grid.CellValueChanged += (_, e) => MappingCellChanged(e);
         _grid.EditingControlShowing += (_, e) =>
         {
-            if (_grid.CurrentCell?.OwningColumn.Name == "Parameter" &&
+            if (_grid.CurrentCell?.OwningColumn?.Name == "Parameter" &&
                 e.Control is DataGridViewComboBoxEditingControl macroEditor)
             {
                 // A Macro parameter is a chosen profile-owned macro, not
@@ -309,7 +309,9 @@ public sealed class MainForm : Form
     private void SetParameterCell(
         DataGridViewRow row, MappingKind kind, string? parameter)
     {
-        int index = _grid.Columns["Parameter"].Index;
+        int index = _grid.Columns["Parameter"]?.Index ??
+            throw new InvalidOperationException(
+                "The mapping grid is missing its Parameter column.");
         if (kind == MappingKind.Macro)
         {
             string[] names = MappingParameterChoices.MacroNames(
@@ -345,7 +347,9 @@ public sealed class MainForm : Form
     private void MappingCellChanged(DataGridViewCellEventArgs e)
     {
         if (_loading || e.RowIndex < 0) return;
-        if (e.ColumnIndex == _grid.Columns["Kind"].Index)
+        if (e.ColumnIndex == (_grid.Columns["Kind"]?.Index ??
+            throw new InvalidOperationException(
+                "The mapping grid is missing its Kind column.")))
         {
             DataGridViewRow row = _grid.Rows[e.RowIndex];
             if (Enum.TryParse<MappingKind>(

@@ -25,12 +25,13 @@ internal sealed class MacroEditorDialog : Form
         Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
         AcceptsReturn = true, AcceptsTab = true
     };
-    private readonly DataGridView _steps = new()
+    private readonly MacroStepsGrid _steps = new()
     {
         Dock = DockStyle.Fill, AllowUserToAddRows = false,
         AllowUserToDeleteRows = false, RowHeadersVisible = true,
         RowHeadersWidth = 48,
         SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+        MultiSelect = true,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
     };
     private readonly Button _addStep = new() { Text = "Add step (after)", AutoSize = true };
@@ -47,7 +48,7 @@ internal sealed class MacroEditorDialog : Form
         Dock = DockStyle.Fill,
         AutoSize = false
     };
-    private readonly Button _removeStep = new() { Text = "Remove step", AutoSize = true };
+    private readonly Button _removeStep = new() { Text = "Remove selected", AutoSize = true };
     private readonly Button _stepUp = new() { Text = "Move up", AutoSize = true };
     private readonly Button _stepDown = new() { Text = "Move down", AutoSize = true };
     private readonly Button _recordSteps = new()
@@ -181,6 +182,18 @@ internal sealed class MacroEditorDialog : Form
         _steps.CurrentCellChanged += (_, _) => UpdateSelectionInfo();
         _steps.RowsAdded += (_, _) => NumberStepRows();
         _steps.RowsRemoved += (_, _) => NumberStepRows();
+        _steps.CommandHandler = HandleStepCommand;
+        _steps.KeyDown += (_, e) =>
+        {
+            // Some DataGridView keys (notably Delete) are dispatched as
+            // KeyDown instead of ProcessCmdKey. Both paths use the same
+            // handler and never modify a cell while its editor is active.
+            if (!_steps.IsCurrentCellInEditMode && HandleStepCommand(e.KeyData))
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        };
         right.Controls.Add(_steps, 0, 4);
 
         var stepButtons = new FlowLayoutPanel
@@ -225,8 +238,8 @@ internal sealed class MacroEditorDialog : Form
         {
             Dock = DockStyle.Fill,
             Text = "No selection: Add/Record append; Insert before prepends. " +
-                "Select a numbered row to insert relative to it. " +
-                "25ms after KeyDown + 25ms after KeyUp ≈ 50ms per key cycle."
+                "Ctrl/Shift-click for multiple rows. Del deletes; Ctrl+C/X/V copies/cuts/pastes. " +
+                "Clear selection to append."
         }, 0, 1);
         right.Controls.Add(selectionHelp, 0, 7);
         root.Controls.Add(right, 1, 0);
@@ -253,11 +266,7 @@ internal sealed class MacroEditorDialog : Form
         _addStep.Click += (_, _) => InsertManualStep(before: false);
         _insertBefore.Click += (_, _) => InsertManualStep(before: true);
         _clearStepSelection.Click += (_, _) => ClearStepSelection();
-        _removeStep.Click += (_, _) =>
-        {
-            if (_steps.CurrentRow is not null)
-                _steps.Rows.Remove(_steps.CurrentRow);
-        };
+        _removeStep.Click += (_, _) => DeleteSelectedSteps();
         _recordSteps.Click += (_, _) => RecordSteps();
         _testMacro.Click += (_, _) => TestMacro();
         _stepUp.Click += (_, _) => MoveStep(-1);
@@ -337,8 +346,18 @@ internal sealed class MacroEditorDialog : Form
     /// CurrentCell is deliberately null when the user has not selected a
     /// step. Do not use Rows[0] as an implicit selection after a reload.
     /// </summary>
+    private int[] SelectedStepIndices =>
+        _steps.SelectedRows.Cast<DataGridViewRow>()
+            .Select(row => row.Index)
+            .Where(index => index >= 0)
+            .Distinct()
+            .Order()
+            .ToArray();
+
+    // When several rows are selected, insert after the final selected row.
     private int? SelectedStepIndex =>
-        _steps.CurrentCell is null ? null : _steps.CurrentCell.RowIndex;
+        SelectedStepIndices.LastOrDefault(-1) is int index && index >= 0
+            ? index : null;
 
     private void ClearStepSelection()
     {
@@ -357,12 +376,15 @@ internal sealed class MacroEditorDialog : Form
     private void UpdateSelectionInfo()
     {
         if (_stepSelectionInfo is null) return;
-        int? index = SelectedStepIndex;
-        _stepSelectionInfo.Text = index.HasValue
-            ? $"Selected step {index.Value + 1} of {_steps.Rows.Count} " +
-              "— Add/Record after it, or Insert before it."
-            : $"{_steps.Rows.Count} step(s); no selection " +
-              "— Add/Record append; Insert before adds at the start.";
+        int[] selected = SelectedStepIndices;
+        _stepSelectionInfo.Text = selected.Length switch
+        {
+            0 => $"{_steps.Rows.Count} step(s); no selection — Add/Record/Paste append.",
+            1 => $"Selected step {selected[0] + 1} of {_steps.Rows.Count} " +
+                 "— Add/Record/Paste after; Insert before.",
+            _ => $"{selected.Length} rows selected (steps {selected[0] + 1}–" +
+                 $"{selected[^1] + 1}) — Paste/Add/Record after last selected."
+        };
     }
 
     private void InsertManualStep(bool before)
@@ -373,7 +395,9 @@ internal sealed class MacroEditorDialog : Form
         try
         {
             // Capture selection before a possible EndEdit focus change.
-            int? selectedIndex = SelectedStepIndex;
+            int[] selected = SelectedStepIndices;
+            int? selectedIndex = selected.Length == 0
+                ? null : (before ? selected[0] : selected[^1]);
             _steps.EndEdit();
             int index = SequenceEditOperations.GetInsertionIndex(
                 _steps.Rows.Count, selectedIndex, before);
@@ -388,6 +412,142 @@ internal sealed class MacroEditorDialog : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
+
+    private bool HandleStepCommand(Keys keyData)
+    {
+        if (_loadedIndex < 0 ||
+            _mode.SelectedItem?.ToString() != nameof(MacroMode.Steps) ||
+            _steps.IsCurrentCellInEditMode)
+            return false;
+
+        if (keyData == Keys.Delete)
+        {
+            DeleteSelectedSteps();
+            return true;
+        }
+        if (keyData == (Keys.Control | Keys.C))
+        {
+            CopySelectedSteps();
+            return true;
+        }
+        if (keyData == (Keys.Control | Keys.X))
+        {
+            CutSelectedSteps();
+            return true;
+        }
+        if (keyData == (Keys.Control | Keys.V))
+        {
+            PasteSteps();
+            return true;
+        }
+        return false;
+    }
+
+    private void ReplaceStepRows(
+        IReadOnlyList<MacroStep> steps, int firstSelection, int selectedCount)
+    {
+        _steps.EndEdit();
+        _steps.Rows.Clear();
+        foreach (MacroStep step in steps)
+            _steps.Rows.Add(step.Kind.ToString(), step.Parameter,
+                step.DelayAfterMs.ToString());
+
+        ClearStepSelection();
+        if (selectedCount <= 0) return;
+        for (int i = firstSelection;
+             i < Math.Min(_steps.Rows.Count, firstSelection + selectedCount); i++)
+            _steps.Rows[i].Selected = true;
+        if (firstSelection >= 0 && firstSelection < _steps.Rows.Count)
+            _steps.CurrentCell = _steps.Rows[firstSelection].Cells[0];
+        UpdateSelectionInfo();
+    }
+
+    private void DeleteSelectedSteps()
+    {
+        int[] selected = SelectedStepIndices;
+        if (selected.Length == 0) return;
+        try
+        {
+            var remaining = SequenceEditOperations.RemoveSelected(
+                ReadStepRows(), selected);
+            ReplaceStepRows(remaining, 0, 0);
+        }
+        catch (Exception ex)
+        {
+            ShowStepEditError(ex);
+        }
+    }
+
+    private void CopySelectedSteps()
+    {
+        try { CopyRowsToClipboard(); }
+        catch (Exception ex) { ShowStepEditError(ex); }
+    }
+
+    private void CutSelectedSteps()
+    {
+        int[] selected = SelectedStepIndices;
+        if (selected.Length == 0) return;
+        try
+        {
+            // Nothing is removed until Windows confirms clipboard storage.
+            CopyRowsToClipboard();
+            var remaining = SequenceEditOperations.RemoveSelected(
+                ReadStepRows(), selected);
+            ReplaceStepRows(remaining, 0, 0);
+        }
+        catch (Exception ex) { ShowStepEditError(ex); }
+    }
+
+    private void CopyRowsToClipboard()
+    {
+        int[] selected = SelectedStepIndices;
+        if (selected.Length == 0) return;
+        var copied = SequenceEditOperations.CopySelected(ReadStepRows(), selected);
+        string payload = MacroStepsClipboardCodec.Serialize(copied);
+        var clipboard = new DataObject();
+        clipboard.SetData(MacroStepsClipboardCodec.Format, false, payload);
+        clipboard.SetText(string.Join(Environment.NewLine,
+            copied.Select(s => $"{s.Kind}\t{s.Parameter}\t{s.DelayAfterMs}")));
+        Clipboard.SetDataObject(clipboard, copy: true);
+    }
+
+    private void PasteSteps()
+    {
+        try
+        {
+            IDataObject? clipboard = Clipboard.GetDataObject();
+            if (clipboard is null ||
+                !clipboard.GetDataPresent(MacroStepsClipboardCodec.Format, false))
+            {
+                MessageBox.Show(this,
+                    "The clipboard does not contain G13Reborn macro steps. " +
+                    "Select rows and press Ctrl+C to copy them first.",
+                    "Nothing to paste", MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            string? payload = clipboard.GetData(
+                MacroStepsClipboardCodec.Format, false) as string;
+            if (payload is null)
+                throw new ArgumentException("Macro clipboard data was not text.");
+
+            var copied = MacroStepsClipboardCodec.Deserialize(payload);
+            int[] selected = SelectedStepIndices;
+            var existing = ReadStepRows();
+            var pasted = SequenceEditOperations.PasteSteps(
+                existing, copied, selected);
+            int insertAt = selected.Length == 0
+                ? existing.Count : selected[^1] + 1;
+            ReplaceStepRows(pasted, insertAt, copied.Count);
+        }
+        catch (Exception ex) { ShowStepEditError(ex); }
+    }
+
+    private void ShowStepEditError(Exception ex) =>
+        MessageBox.Show(this, ex.Message, "Cannot edit macro steps",
+            MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
     private void MoveStep(int direction)
     {
@@ -484,8 +644,12 @@ internal sealed class MacroEditorDialog : Form
         {
             var macro = _macros[_loadedIndex].Clone();
             macro.Mode = MacroMode.Steps;
+            // A recording made at the end has a final 0ms delay by
+            // design. In the middle we must create a usable transition
+            // before playback continues with the original next step.
             macro.Steps = SequenceEditOperations.InsertRecording(
-                macro.Steps, recorded, selectedIndex);
+                macro.Steps, recorded, selectedIndex,
+                joinDelayMs: (int)_keyUpDelay.Value);
             macro.Validate();
 
             _macros[_loadedIndex] = macro;
@@ -604,5 +768,23 @@ internal sealed class MacroEditorDialog : Form
             MessageBox.Show(this, ex.Message, "Invalid macros",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+}
+
+
+/// <summary>
+/// Intercept sequence shortcuts before DataGridView handles Ctrl+C as a
+/// cell/text copy. While a cell is being edited, native text shortcuts are
+/// preserved and do not cut or paste entire macro rows.
+/// </summary>
+internal sealed class MacroStepsGrid : DataGridView
+{
+    public Func<Keys, bool>? CommandHandler { get; set; }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (!IsCurrentCellInEditMode && CommandHandler?.Invoke(keyData) == true)
+            return true;
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 }

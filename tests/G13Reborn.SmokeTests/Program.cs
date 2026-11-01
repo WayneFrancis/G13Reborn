@@ -1067,7 +1067,7 @@ Check(loopHeld.Clone().RepeatMode == MacroRepeatMode.WhileHeld &&
 Check(loopOnce.RepeatMode == MacroRepeatMode.Once,
     "new macro defaults to nonlooping Once");
 var oldMacro = System.Text.Json.JsonSerializer.Deserialize<MacroDefinition>(
-    "{\\\"Name\\\":\\\"Legacy\\\",\\\"Mode\\\":0,\\\"Text\\\":\\\"Hi\\\"}");
+    """{"Name":"Legacy","Mode":0,"Text":"Hi"}""");
 Check(oldMacro is not null && oldMacro.RepeatMode == MacroRepeatMode.Once,
     "old saved macro without RepeatMode loads as Once");
 bool badRepeatRejected = false;

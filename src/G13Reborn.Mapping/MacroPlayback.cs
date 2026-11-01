@@ -14,7 +14,8 @@ public static class MacroPlayback
         MacroDefinition macro,
         Action<InputEvent> emit,
         Action<string> emitText,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<int, MacroStep>? onStep = null)
     {
         ArgumentNullException.ThrowIfNull(macro);
         ArgumentNullException.ThrowIfNull(emit);
@@ -73,9 +74,11 @@ public static class MacroPlayback
             return;
         }
 
-        foreach (MacroStep step in macro.Steps)
+        for (int stepIndex = 0; stepIndex < macro.Steps.Count; stepIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            MacroStep step = macro.Steps[stepIndex];
+            onStep?.Invoke(stepIndex, step);
             switch (step.Kind)
             {
                 case MacroStepKind.Delay:

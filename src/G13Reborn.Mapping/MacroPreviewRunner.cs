@@ -28,7 +28,8 @@ public sealed class MacroPreviewRunner
     }
 
     public async Task RunAsync(
-        MacroDefinition macro, CancellationToken cancellationToken = default)
+        MacroDefinition macro, CancellationToken cancellationToken = default,
+        Action<int, MacroStep>? onStep = null)
     {
         ArgumentNullException.ThrowIfNull(macro);
         // Do not hold the output lock while parsing / validating.
@@ -49,7 +50,8 @@ public sealed class MacroPreviewRunner
         {
             await MacroPlayback.ExecuteAsync(
                 macro, action => Emit(action, run.Token),
-                text => EmitText(text, run.Token), run.Token)
+                text => EmitText(text, run.Token), run.Token,
+                onStep)
                 .ConfigureAwait(false);
         }
         finally

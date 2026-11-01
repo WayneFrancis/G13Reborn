@@ -1023,3 +1023,25 @@ Check(lcdTest.Length == 992 && lcdTest[32] != 0 &&
       lcdTest[991] != 0 && lcdTest[32 + 2 * 160 + 80] != 0,
     "G13 LCD test pattern includes border and central crosshair");
 Console.WriteLine("G13 hardware report encoder tests passed (no device output).");
+
+
+// G13 M-key LED readback uses the same feature ID and mask layout as
+// the write path. No real USB device is accessed in these tests.
+Check(G13HardwareReports.ReadMacroLedMask(
+    new byte[] { 0x05, 0x0D, 0, 0, 0 }) == 0x0D,
+    "M1/M3/MR LED readback uses low four bits of feature report 05");
+Check(G13HardwareReports.ReadMacroLedMask(
+    new byte[] { 0x05, 0xFF, 0, 0, 0 }) == 0x0F,
+    "macro LED readback ignores reserved high bits");
+Check(G13HardwareReports.ReadMacroLedMask(
+    G13HardwareReports.MacroLeds(false, true, false, true)) == 0x0A,
+    "M2/MR write/read mask roundtrip matches bit layout");
+bool shortLedReportRejected = false;
+try { G13HardwareReports.ReadMacroLedMask(new byte[] { 0x05, 0x01 }); }
+catch (ArgumentException) { shortLedReportRejected = true; }
+Check(shortLedReportRejected, "LED readback rejects incomplete reports");
+bool wrongLedReportRejected = false;
+try { G13HardwareReports.ReadMacroLedMask(new byte[] { 0x07, 1, 0, 0, 0 }); }
+catch (ArgumentException) { wrongLedReportRejected = true; }
+Check(wrongLedReportRejected, "LED readback rejects RGB report IDs");
+Console.WriteLine("M-key LED readback decoding tests passed.");

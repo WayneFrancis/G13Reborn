@@ -384,3 +384,28 @@ Protocol references:
 Future work after physical confirmation: show selected profile,
 time and macro state on the LCD, then allow per-profile backlight
 colours with optional apply-on-profile-switch.
+
+
+### M-key LED readback and coexistence with Logitech Gaming Software
+
+The LCD test pattern, blank frame and RGB backlight have been verified on
+real G13 hardware. The M-key indicator LEDs still need testing without
+Logitech Gaming Software (LGS) running. When you press M1/M2/M3, LGS can
+restore its own LCD picture and change the indicator state.
+
+Quit LGS fully via its **system tray** menu (closing its main window
+is not sufficient), then open **LCD / backlight...**. Select M1 only and
+press **Apply M LEDs**: the window shows the requested mask and attempts
+to read back the device's current 5-byte LED feature report (ID 0x05).
+**Read LEDs** queries the same report without writing anything, updates
+the four checkbox values and displays the mask in hexadecimal.
+
+Readback success only proves what the device reports at that instant.
+A mismatch after writing may indicate another program, such as LGS,
+replaced the state, or that an HID collection was selected incorrectly.
+If Windows refuses the read command, the dialog distinguishes
+"write succeeded, readback unavailable" from an actual write failure.
+
+The checkbox controls do **not** automatically write reports; press
+**Apply M LEDs** to send changes. The first G13 LCD and RGB
+implementations remain unchanged.

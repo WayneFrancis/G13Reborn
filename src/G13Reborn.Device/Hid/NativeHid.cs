@@ -218,6 +218,27 @@ internal static class NativeHid
         return found;
     }
 
+    /// <summary>Extract HID Usage and UsagePage from HIDP_CAPS (no report I/O).</summary>
+    internal static (ushort UsagePage, ushort Usage) Usage(SafeFileHandle handle)
+    {
+        if (!HidD_GetPreparsedData(handle, out IntPtr preparsed))
+            return (0, 0);
+        try
+        {
+            IntPtr caps = Marshal.AllocHGlobal(128);
+            try
+            {
+                if (HidP_GetCaps(preparsed, caps) < 0)
+                    return (0, 0);
+                // HIDP_CAPS begins: Usage at 0, UsagePage at 2.
+                return ((ushort)Marshal.ReadInt16(caps, 2),
+                    (ushort)Marshal.ReadInt16(caps, 0));
+            }
+            finally { Marshal.FreeHGlobal(caps); }
+        }
+        finally { HidD_FreePreparsedData(preparsed); }
+    }
+
     internal static (int Input, int Output, int Feature) ReportLengths(SafeFileHandle handle)
     {
         if (!HidD_GetPreparsedData(handle, out IntPtr preparsed))

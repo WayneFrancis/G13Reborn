@@ -32,6 +32,31 @@ public static class G13OutputDevice
         return G13HardwareReports.ReadMacroLedMask(report);
     }
 
+    /// <summary>
+    /// Read an explicitly known, already documented G13 feature report.
+    /// No SET operations or unsupported report IDs are permitted.
+    /// </summary>
+    public static byte[] ReadKnownFeature(G13DeviceInfo device, byte reportId)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        CheckG13(device);
+        if (reportId is not G13HardwareReports.MacroLedReportId and
+            not G13HardwareReports.RgbReportId)
+            throw new ArgumentOutOfRangeException(nameof(reportId),
+                "Only verified G13 feature report IDs 05 and 07 are readable.");
+        if (device.FeatureReportLength is < G13HardwareReports.FeatureLength or > 4096)
+            throw new NotSupportedException("The HID collection does not expose a valid G13 feature report.");
+
+        var report = new byte[device.FeatureReportLength];
+        report[0] = reportId;
+        using var handle = NativeHid.OpenForFeatureRead(device.Path);
+        NativeHid.GetFeature(handle, report);
+        if (report[0] != reportId)
+            throw new InvalidDataException(
+                $"Unexpected returned report ID 0x{report[0]:X2}; expected 0x{reportId:X2}.");
+        return report;
+    }
+
     private static void SendFeature(G13DeviceInfo device, byte[] payload)
     {
         ArgumentNullException.ThrowIfNull(device);

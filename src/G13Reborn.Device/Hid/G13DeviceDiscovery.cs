@@ -6,6 +6,18 @@ public static class G13DeviceDiscovery
     public const ushort ProductId = 0xC21C;
 
     /// <summary>Includes interfaces whose metadata cannot be read due to driver access.</summary>
+    /// <summary>Read only HID collection identity; unavailable returns zero.</summary>
+    public static (ushort UsagePage, ushort Usage) TryGetUsage(G13DeviceInfo device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        if (device.VendorId != VendorId || device.ProductId != ProductId ||
+            !device.Path.Contains("vid_046d&pid_c21c",
+                StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Not a Logitech G13 collection.", nameof(device));
+        using var handle = NativeHid.OpenMetadata(device.Path);
+        return handle.IsInvalid ? (0, 0) : NativeHid.Usage(handle);
+    }
+
     public static IReadOnlyList<G13DeviceInfo> Enumerate()
     {
         var result = new List<G13DeviceInfo>();

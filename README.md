@@ -347,3 +347,40 @@ confirmation. If no macro exists, the dropdown has no macro names yet:
 create one in **Edit macros...** first. Empty selections remain invalid
 for saving a Macro assignment, rather than silently choosing a macro.
 All non-Macro actions retain ordinary editable parameter text.
+
+
+## Experimental G13 hardware LCD and lighting (explicit opt-in)
+
+The main **Profiles & Input Mapping** window now has **LCD / backlight...**
+next to the G13 device controls. Open it only while G13 forwarding is
+stopped. The diagnostic window enumerates HID collections for device
+\`046D:C21C\` separately:
+
+- **RGB / M-key LEDs**: the selected feature-report collection (5-byte
+  report or larger) accepts a manually chosen RGB colour and the four
+  M1/M2/M3/MR light checkboxes. Press **Apply RGB** or **Apply M LEDs**
+  to send an explicit one-shot HID feature report. RGB is report ID
+  \`0x07\` with R/G/B bytes; macro LEDs use report ID \`0x05\`, with
+  four bit flags.
+- **LCD**: the selected output-report collection must advertise exactly
+  992 bytes. **Send test pattern** displays a 160×43 monochrome test
+  image; **Clear LCD** sends an empty frame. The bitmap starts at byte
+  32, with six vertical 8-row bands, one byte per column.
+
+This feature does **not** replace the system HID driver, change
+the input-report reader, install new services, save device settings
+or automatically overwrite the LCD/background lighting. It sends
+nothing until a button is pressed. On Windows, a write-capable HID
+interface may be held exclusively by Logitech Gaming Software or
+another utility; this will be reported as an error. A working build
+and correct byte-level tests do **not** establish that a particular
+Windows driver will accept real hardware commands.
+
+Protocol references:
+- Linux \`hid-lg-g15\`: https://code.googlesource.com/linux/torvalds/linux/+/de03b17ec046d81c4713bc54306579b9024fc513/drivers/hid/hid-lg-g15.c
+- PadForge's monochrome screen report documentation:
+  https://padforge.org/docs/reference/keyboard-screens-internals/
+
+Future work after physical confirmation: show selected profile,
+time and macro state on the LCD, then allow per-profile backlight
+colours with optional apply-on-profile-switch.

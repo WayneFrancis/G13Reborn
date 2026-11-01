@@ -1,4 +1,5 @@
 using G13Reborn.Device;
+using G13Reborn.Device.Hid;
 using G13Reborn.VirtualController;
 using G13Reborn.Mapping;
 
@@ -983,3 +984,42 @@ Check(MappingParameterChoices.ExistingMacroChoice("Old name", laterChoices) == "
       MappingParameterChoices.ExistingMacroChoice("New name", laterChoices) == "New name",
     "macro dropdown refresh removes deleted or renamed names and accepts new names");
 Console.WriteLine("Profile macro dropdown option/transition tests passed.");
+
+
+// G13 output report regressions; these never open a real HID handle.
+var hardwareRgb = G13HardwareReports.Rgb(0x12, 0x34, 0x56);
+Check(hardwareRgb.SequenceEqual(new byte[] { 0x07, 0x12, 0x34, 0x56, 0x00 }),
+    "G13 RGB report uses ID 7 and 5 bytes (R/G/B)");
+Check(G13HardwareReports.MacroLeds(true, false, true, true)
+    .SequenceEqual(new byte[] { 0x05, 0x0D, 0, 0, 0 }),
+    "G13 macro LED report sets M1/M3/MR bits");
+Check(G13HardwareReports.MacroLeds(false, false, false, false)[1] == 0,
+    "G13 M LED report can explicitly clear all four lights");
+
+var lcdBlank = G13HardwareReports.BlankLcd();
+Check(lcdBlank.Length == 992 && lcdBlank[0] == 3 &&
+      lcdBlank.Skip(1).All(b => b == 0),
+    "empty G13 LCD output has the correct 992-byte header and clear pixels");
+
+var lcdSingle = G13HardwareReports.LcdFrame(
+    (x, y) => (x == 0 && y == 0) ||
+               (x == 0 && y == 1) ||
+               (x == 159 && y == 42) ||
+               (x == 83 && y == 15));
+Check(lcdSingle.Length == 992 && lcdSingle[0] == 3 &&
+      lcdSingle.Skip(1).Take(31).All(b => b == 0),
+    "G13 LCD report ID and 31-byte header padding are correct");
+Check(lcdSingle[32] == 0x03,
+    "LCD top-left pixel uses bit 0 and next row uses bit 1");
+Check(lcdSingle[32 + 160 + 83] == 0x80,
+    "LCD second-band final row sets bit 7");
+Check(lcdSingle[991] == 0x04,
+    "LCD last visible pixel (159,42) maps to last byte bit 2");
+Check(lcdSingle.Skip(32).Sum(b => System.Numerics.BitOperations.PopCount((uint)b)) == 4,
+    "LCD frame packs exactly four selected dark pixels");
+
+var lcdTest = G13HardwareReports.TestPattern();
+Check(lcdTest.Length == 992 && lcdTest[32] != 0 &&
+      lcdTest[991] != 0 && lcdTest[32 + 2 * 160 + 80] != 0,
+    "G13 LCD test pattern includes border and central crosshair");
+Console.WriteLine("G13 hardware report encoder tests passed (no device output).");

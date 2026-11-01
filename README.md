@@ -176,3 +176,37 @@ buttons or wheel horizontal scrolling.
 
 The recording isn't automatically linked to a G-key. After accepting
 recording, assign the macro by its name in the G-key mapping grid.
+
+
+### Inserting recordings and standardizing sequence timing
+
+You can now start recording a **new Steps macro with zero existing steps**.
+An empty Steps macro is an acceptable editing draft; it becomes valid for
+saving once a recording (or manually added steps) supplies its first action.
+
+In the macro step grid, select a step before clicking
+**Record / insert steps...** to insert the recording immediately after it.
+If nothing is selected, recording **appends** to the end. A new empty
+sequence accepts the recording as its first steps. Existing actions are
+preserved, subject to the existing 200-step macro limit. After loading
+a macro in the editor, no row is selected by default, so recording
+appends unless you intentionally select a row.
+
+The sequence editor also provides two independent timing controls:
+- **After KeyDown (ms)** and **Apply key-down**, default 25 ms. Sets
+  \`DelayAfterMs\` on *KeyDown* steps only. For a matching KeyUp, this
+  delay controls how long the key stays pressed.
+- **After KeyUp (ms)** and **Apply key-up**, default 25 ms. Sets
+  \`DelayAfterMs\` on *KeyUp* steps only, spacing key releases from the
+  next command.
+
+Applying one does not modify the other, and neither changes mouse,
+wheel, or Delay-only actions. Both can be applied for approximately
+25 ms of key-down time plus 25 ms between presses (roughly a 50 ms
+key cycle; operating-system scheduling can affect actual timings).
+For \`KeyPress\` steps, playback still uses its own short fixed tap
+time; use explicit KeyDown and KeyUp steps if you need these two timing
+controls.
+
+Use **Save macros** and then **Save profile** to persist both the
+recorded steps and standardized delays.

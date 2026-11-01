@@ -416,3 +416,86 @@ catch (OperationCanceledException) { stoppedDuringDelay = true; }
 Check(stoppedDuringDelay && duringWait.Count == 0,
     "cancelling during a long delay prevents later input");
 Console.WriteLine("Macro recording and long-sequence cancellation tests passed.");
+
+
+// Sequence editing regressions: record into a brand-new empty Steps macro,
+// insert into an existing macro without replacing its surrounding actions,
+// and standardize key-down/key-up delays independently.
+var emptyDraft = new MacroDefinition
+{
+    Name = "AdvMacro", Mode = MacroMode.Steps, Steps = new()
+};
+bool emptyDraftRejected = false;
+try { emptyDraft.Validate(); }
+catch (ArgumentException) { emptyDraftRejected = true; }
+Check(emptyDraftRejected, "empty Steps macro cannot be saved before recording");
+emptyDraft.Validate(allowEmptySteps: true);
+Check(true, "empty Steps macro is valid as an editor draft before recording");
+
+var newCapture = new[]
+{
+    new MacroStep { Kind = MacroStepKind.KeyDown, Parameter = "A", DelayAfterMs = 7 },
+    new MacroStep { Kind = MacroStepKind.KeyUp, Parameter = "A", DelayAfterMs = 11 }
+};
+var built = SequenceEditOperations.InsertRecording(
+    emptyDraft.Steps, newCapture, null);
+Check(built.Count == 2 && built[0].Kind == MacroStepKind.KeyDown &&
+    built[1].Kind == MacroStepKind.KeyUp,
+    "new recording can populate empty Steps macro without preexisting actions");
+emptyDraft.Steps = built;
+emptyDraft.Validate();
+
+var originalSequence = new List<MacroStep>
+{
+    new() { Kind = MacroStepKind.KeyDown, Parameter = "Ctrl", DelayAfterMs = 20 },
+    new() { Kind = MacroStepKind.KeyUp, Parameter = "Ctrl", DelayAfterMs = 30 },
+    new() { Kind = MacroStepKind.WheelUp, DelayAfterMs = 40 }
+};
+var insert = SequenceEditOperations.InsertRecording(
+    originalSequence, newCapture, selectedIndex: 0);
+Check(insert.Count == 5 &&
+    insert.Select(s => s.Kind).SequenceEqual(new[]
+    {
+        MacroStepKind.KeyDown, MacroStepKind.KeyDown,
+        MacroStepKind.KeyUp, MacroStepKind.KeyUp, MacroStepKind.WheelUp
+    }), "recording is inserted after selected step and preserves later actions");
+Check(originalSequence.Count == 3 && newCapture[0].DelayAfterMs == 7 &&
+    !ReferenceEquals(insert[1], newCapture[0]),
+    "insertion does not mutate existing or newly recorded steps");
+var appended = SequenceEditOperations.InsertRecording(
+    originalSequence, newCapture, selectedIndex: null);
+Check(appended.Select(s => s.Kind).SequenceEqual(new[]
+{
+    MacroStepKind.KeyDown, MacroStepKind.KeyUp, MacroStepKind.WheelUp,
+    MacroStepKind.KeyDown, MacroStepKind.KeyUp
+}), "recording appends when no step is explicitly selected");
+bool invalidIndexRejected = false;
+try { SequenceEditOperations.InsertRecording(originalSequence, newCapture, 3); }
+catch (ArgumentOutOfRangeException) { invalidIndexRejected = true; }
+Check(invalidIndexRejected, "invalid insertion indices are rejected");
+bool capacityRejected = false;
+var atCapacity = Enumerable.Range(0, 200).Select(_ =>
+    new MacroStep { Kind = MacroStepKind.Delay }).ToArray();
+try { SequenceEditOperations.InsertRecording(atCapacity, newCapture, null); }
+catch (ArgumentException) { capacityRejected = true; }
+Check(capacityRejected, "recording insertion enforces the 200-step limit");
+
+var standard = insert.Select(x => x.Clone()).ToList();
+int downCount = SequenceEditOperations.ApplyKeyboardDelay(
+    standard, MacroStepKind.KeyDown, 25);
+Check(downCount == 2 &&
+    standard[0].DelayAfterMs == 25 &&
+    standard[1].DelayAfterMs == 25 &&
+    standard[2].DelayAfterMs == 11 &&
+    standard[4].DelayAfterMs == 40,
+    "KeyDown apply only changes delays after keyboard key-down events");
+int upCount = SequenceEditOperations.ApplyKeyboardDelay(
+    standard, MacroStepKind.KeyUp, 25);
+Check(upCount == 2 &&
+    standard[2].DelayAfterMs == 25 &&
+    standard[3].DelayAfterMs == 25 &&
+    standard[4].DelayAfterMs == 40,
+    "KeyUp apply only changes delays after keyboard key-up events");
+Check(originalSequence[0].DelayAfterMs == 20,
+    "normalizing an inserted macro leaves the original macro unchanged");
+Console.WriteLine("Record insertion and independent key timing tests passed.");

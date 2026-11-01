@@ -110,7 +110,9 @@ internal sealed class MacroEditorDialog : Form
         var left = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
         left.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        left.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
+        // New / Duplicate / Delete can wrap onto a second line in the
+        // 205px profile column; reserve enough height for both lines.
+        left.RowStyles.Add(new RowStyle(SizeType.Absolute, 75));
         left.Controls.Add(new Label { Text = "Profile macros", Dock = DockStyle.Fill }, 0, 0);
         left.Controls.Add(_list, 0, 1);
         var listButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };

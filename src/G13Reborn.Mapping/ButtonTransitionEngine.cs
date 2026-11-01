@@ -5,7 +5,7 @@ namespace G13Reborn.Mapping;
 
 public enum InputEventKind { KeyDown, KeyUp, MouseDown, MouseUp, Wheel }
 
-public enum MouseControl { Left = 1, Right = 2, Middle = 3 }
+public enum MouseControl { Left = 1, Right = 2, Middle = 3, XButton1 = 4, XButton2 = 5 }
 
 public readonly record struct InputEvent(InputEventKind Kind, int Code);
 
@@ -59,6 +59,10 @@ public sealed class ButtonTransitionEngine
                     mouse.Add((int)MouseControl.Right); break;
                 case MappingKind.MouseMiddle:
                     mouse.Add((int)MouseControl.Middle); break;
+                case MappingKind.MouseXButton1:
+                    mouse.Add((int)MouseControl.XButton1); break;
+                case MappingKind.MouseXButton2:
+                    mouse.Add((int)MouseControl.XButton2); break;
                 case MappingKind.WheelUp:
                 case MappingKind.WheelDown:
                     wheelBits.Add(bit); break;

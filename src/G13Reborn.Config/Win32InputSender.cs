@@ -22,6 +22,8 @@ internal static class Win32InputSender
     private const uint MouseMiddleDown = 0x0020;
     private const uint MouseMiddleUp = 0x0040;
     private const uint MouseWheel = 0x0800;
+    private const uint MouseXDown = 0x0080;
+    private const uint MouseXUp = 0x0100;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct KeyInput
@@ -144,8 +146,15 @@ internal static class Win32InputSender
             (MouseControl.Right, true) => MouseRightUp,
             (MouseControl.Middle, false) => MouseMiddleDown,
             (MouseControl.Middle, true) => MouseMiddleUp,
+            (MouseControl.XButton1, false) or (MouseControl.XButton2, false) => MouseXDown,
+            (MouseControl.XButton1, true) or (MouseControl.XButton2, true) => MouseXUp,
             _ => throw new ArgumentOutOfRangeException(nameof(button))
         };
-        return new Input { Type = InputMouse, Mouse = new MouseInput { Flags = flags } };
+        uint mouseData = button is (int)MouseControl.XButton1 or (int)MouseControl.XButton2
+            ? MouseExtraButtons.MouseData((MouseControl)button) : 0;
+        return new Input { Type = InputMouse, Mouse = new MouseInput
+        {
+            Flags = flags, MouseData = mouseData
+        } };
     }
 }

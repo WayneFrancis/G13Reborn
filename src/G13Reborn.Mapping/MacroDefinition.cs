@@ -22,7 +22,7 @@ public enum MacroStepKind
 public sealed class MacroStep
 {
     public MacroStepKind Kind { get; set; } = MacroStepKind.KeyPress;
-    /// <summary>Single keyboard key or left/right/middle mouse button.</summary>
+    /// <summary>Single keyboard key or Left/Right/Middle/XButton1/XButton2 mouse button.</summary>
     public string Parameter { get; set; } = "";
     /// <summary>Additional delay AFTER this step, in milliseconds.</summary>
     public int DelayAfterMs { get; set; }
@@ -92,8 +92,10 @@ public sealed class MacroStep
             "LEFT" => (int)MouseControl.Left,
             "RIGHT" => (int)MouseControl.Right,
             "MIDDLE" => (int)MouseControl.Middle,
+            "XBUTTON1" or "X1" => (int)MouseControl.XButton1,
+            "XBUTTON2" or "X2" => (int)MouseControl.XButton2,
             _ => throw new ArgumentException(
-                "Mouse button must be Left, Right or Middle.")
+                "Mouse button must be Left, Right, Middle, XButton1 or XButton2.")
         };
     }
 }

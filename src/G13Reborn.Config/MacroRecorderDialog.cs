@@ -27,6 +27,9 @@ internal sealed class MacroRecorderDialog : Form
     private const int WmMButtonUp = 0x0208;
     private const int WmMButtonDblClk = 0x0209;
     private const int WmMouseWheel = 0x020A;
+    private const int WmXButtonDown = 0x020B;
+    private const int WmXButtonUp = 0x020C;
+    private const int WmXButtonDblClk = 0x020D;
     private const uint LlKeyboardInjected = 0x10;
     private const uint LlMouseInjected = 0x01;
 
@@ -303,6 +306,13 @@ internal sealed class MacroRecorderDialog : Form
                         case WmMButtonDblClk:
                             _session.RecordMouseButton("Middle",
                                 message != WmMButtonUp, elapsed);
+                            break;
+                        case WmXButtonDown: case WmXButtonUp:
+                        case WmXButtonDblClk:
+                            string? button = MouseExtraButtons.DecodeHookButton(data.MouseData);
+                            if (button is not null)
+                                _session.RecordMouseButton(button,
+                                    message != WmXButtonUp, elapsed);
                             break;
                         case WmMouseWheel:
                             int delta = (short)(data.MouseData >> 16);

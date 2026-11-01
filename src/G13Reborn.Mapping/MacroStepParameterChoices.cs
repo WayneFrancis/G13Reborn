@@ -10,7 +10,7 @@ public enum MacroStepParameterType { None, Keyboard, MouseButton }
 public static class MacroStepParameterChoices
 {
     public static IReadOnlyList<string> MouseButtons { get; } =
-        Array.AsReadOnly(new[] { "Left", "Right", "Middle" });
+        Array.AsReadOnly(new[] { "Left", "Right", "Middle", "XButton1", "XButton2" });
 
     public static MacroStepParameterType TypeFor(MacroStepKind kind) => kind switch
     {

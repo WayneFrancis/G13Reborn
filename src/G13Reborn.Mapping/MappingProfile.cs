@@ -14,7 +14,9 @@ public enum MappingKind
     WheelUp,
     WheelDown,
     VJoyButton,
-    Macro
+    Macro,
+    MouseXButton1,
+    MouseXButton2
 }
 
 public sealed class ButtonAction

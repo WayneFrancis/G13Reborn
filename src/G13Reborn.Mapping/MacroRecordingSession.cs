@@ -21,9 +21,9 @@ public sealed class MacroRecordingSession
 
     public int StepCount => _steps.Count;
     public bool IsFinished => _finished;
-    // Reserve 16 slots to append releases for at most 12 held keys and
-    // three held mouse buttons when a recording reaches its action limit.
-    public bool AtLimit => _steps.Count >= MaximumSteps - 16;
+    // Reserve 18 slots for releases of at most 12 held keys and five
+    // held mouse buttons (plus one safety margin).
+    public bool AtLimit => _steps.Count >= MaximumSteps - 18;
     public IReadOnlyList<MacroStep> Steps => _steps.Select(s => s.Clone()).ToList();
 
     public bool RecordKeyboard(uint virtualKey, bool pressed, long elapsedMs)
@@ -102,7 +102,11 @@ public sealed class MacroRecordingSession
             {
                 (int)MouseControl.Left => "Left",
                 (int)MouseControl.Right => "Right",
-                _ => "Middle"
+                (int)MouseControl.Middle => "Middle",
+                (int)MouseControl.XButton1 => "XButton1",
+                (int)MouseControl.XButton2 => "XButton2",
+                _ => throw new InvalidOperationException("Unknown held mouse button.")
+
             };
             Append(MacroStepKind.MouseUp, name, releaseAt);
         }

@@ -21,6 +21,10 @@ internal sealed class MacroEditorDialog : Form
     {
         DropDownStyle = ComboBoxStyle.DropDownList, Width = 135
     };
+    private readonly ComboBox _repeat = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList, Width = 155
+    };
     private readonly NumericUpDown _textDelay = new()
     {
         Minimum = 5, Maximum = 100, Width = 55, Value = 25
@@ -92,8 +96,8 @@ internal sealed class MacroEditorDialog : Form
         _originalNames = _macros.Select(m => (string?)m.Name).ToList();
         _originalFingerprint = JsonSerializer.Serialize(_macros);
         Text = "G13Reborn — Macro Editor";
-        Size = new Size(940, 720);
-        MinimumSize = new Size(760, 560);
+        Size = new Size(1020, 740);
+        MinimumSize = new Size(820, 580);
         StartPosition = FormStartPosition.CenterParent;
 
         var root = new TableLayoutPanel
@@ -161,6 +165,13 @@ internal sealed class MacroEditorDialog : Form
             Padding = new Padding(10, 7, 4, 0)
         });
         modeBar.Controls.Add(_textDelay);
+        modeBar.Controls.Add(new Label
+        {
+            Text = "Repeat:", AutoSize = true,
+            Padding = new Padding(10, 7, 2, 0)
+        });
+        _repeat.Items.AddRange(Enum.GetNames<MacroRepeatMode>());
+        modeBar.Controls.Add(_repeat);
         right.Controls.Add(modeBar, 0, 1);
         right.Controls.Add(new Label
         {
@@ -189,6 +200,11 @@ internal sealed class MacroEditorDialog : Form
                 _steps.CommitEdit(DataGridViewDataErrorContexts.Commit);
         };
         _steps.DataError += (_, e) => { e.ThrowException = false; };
+        _steps.CellValueChanged += (_, e) =>
+        {
+            if (e.RowIndex >= 0 && e.ColumnIndex == 0)
+                UpdateStepParameterEditor(_steps.Rows[e.RowIndex]);
+        };
         _steps.SelectionChanged += (_, _) => UpdateSelectionInfo();
         _steps.CurrentCellChanged += (_, _) => UpdateSelectionInfo();
         _steps.RowsAdded += (_, _) => NumberStepRows();
@@ -326,6 +342,9 @@ internal sealed class MacroEditorDialog : Form
             _name.Text = index >= 0 ? _macros[index].Name : "";
             _mode.SelectedItem = index >= 0
                 ? _macros[index].Mode.ToString() : MacroMode.Text.ToString();
+            _repeat.SelectedItem = index >= 0
+                ? _macros[index].RepeatMode.ToString()
+                : MacroRepeatMode.Once.ToString();
             _text.Text = index >= 0 ? _macros[index].Text : "";
             _textDelay.Value = index >= 0
                 ? Math.Clamp(_macros[index].TextDelayMs == 0
@@ -336,14 +355,41 @@ internal sealed class MacroEditorDialog : Form
                 foreach (MacroStep step in _macros[index].Steps)
                     _steps.Rows.Add(step.Kind.ToString(), step.Parameter,
                         step.DelayAfterMs.ToString());
+            UpdateStepParameterEditors();
             // DataGridView selects the first row automatically on load.
             // That is NOT an explicit user selection. Leave it unselected
             // so "Record / insert" appends by default.
             ClearStepSelection();
             UpdateMode();
-            _name.Enabled = _mode.Enabled = index >= 0;
+            _name.Enabled = _mode.Enabled = _repeat.Enabled = index >= 0;
         }
         finally { _loading = false; }
+    }
+
+    private void UpdateStepParameterEditor(DataGridViewRow row)
+    {
+        bool isDelay = row.Cells[0].Value?.ToString() ==
+            nameof(MacroStepKind.Delay);
+        DataGridViewCell parameter = row.Cells[1];
+        if (isDelay)
+        {
+            // Old profiles or a changed action may contain a stale key:
+            // Delay never uses a key/mouse parameter.
+            parameter.Value = "";
+            if (_steps.CurrentCell == parameter && _steps.IsCurrentCellInEditMode)
+                _steps.EndEdit();
+        }
+        parameter.ReadOnly = isDelay;
+        parameter.Style.BackColor = isDelay
+            ? SystemColors.Control : _steps.DefaultCellStyle.BackColor;
+        parameter.Style.ForeColor = isDelay
+            ? SystemColors.GrayText : _steps.DefaultCellStyle.ForeColor;
+    }
+
+    private void UpdateStepParameterEditors()
+    {
+        foreach (DataGridViewRow row in _steps.Rows)
+            UpdateStepParameterEditor(row);
     }
 
     private void UpdateMode()
@@ -425,6 +471,7 @@ internal sealed class MacroEditorDialog : Form
             int index = SequenceEditOperations.GetInsertionIndex(
                 _steps.Rows.Count, selectedIndex, before);
             _steps.Rows.Insert(index, "KeyPress", "A", "0");
+            UpdateStepParameterEditor(_steps.Rows[index]);
             _steps.CurrentCell = _steps.Rows[index].Cells[0];
             _steps.Rows[index].Selected = true;
             UpdateSelectionInfo();
@@ -474,6 +521,7 @@ internal sealed class MacroEditorDialog : Form
         foreach (MacroStep step in steps)
             _steps.Rows.Add(step.Kind.ToString(), step.Parameter,
                 step.DelayAfterMs.ToString());
+        UpdateStepParameterEditors();
 
         ClearStepSelection();
         if (selectedCount <= 0) return;
@@ -596,6 +644,8 @@ internal sealed class MacroEditorDialog : Form
             _steps.Rows[index].Cells[column].Value = there[column];
             _steps.Rows[other].Cells[column].Value = here[column];
         }
+        UpdateStepParameterEditor(_steps.Rows[index]);
+        UpdateStepParameterEditor(_steps.Rows[other]);
         _steps.CurrentCell = _steps.Rows[other].Cells[0];
     }
 
@@ -637,7 +687,8 @@ internal sealed class MacroEditorDialog : Form
             {
                 Kind = Enum.Parse<MacroStepKind>(
                     row.Cells[0].Value?.ToString() ?? "Delay"),
-                Parameter = row.Cells[1].Value?.ToString()?.Trim() ?? "",
+                Parameter = row.Cells[0].Value?.ToString() == nameof(MacroStepKind.Delay)
+                    ? "" : row.Cells[1].Value?.ToString()?.Trim() ?? "",
                 DelayAfterMs = int.Parse(row.Cells[2].Value?.ToString() ?? "0")
             };
             step.Validate();
@@ -727,6 +778,8 @@ internal sealed class MacroEditorDialog : Form
             var macro = _macros[_loadedIndex].Clone();
             macro.Name = _name.Text.Trim();
             macro.Mode = Enum.Parse<MacroMode>(_mode.SelectedItem?.ToString() ?? "Text");
+            macro.RepeatMode = Enum.Parse<MacroRepeatMode>(
+                _repeat.SelectedItem?.ToString() ?? nameof(MacroRepeatMode.Once));
             macro.Text = _text.Text;
             macro.TextDelayMs = (int)_textDelay.Value;
             macro.Steps = ReadStepRows();
@@ -823,6 +876,7 @@ internal sealed class MacroEditorDialog : Form
         var macro = _macros[_loadedIndex];
         if (_name.Text.Trim() != macro.Name ||
             _mode.SelectedItem?.ToString() != macro.Mode.ToString() ||
+            _repeat.SelectedItem?.ToString() != macro.RepeatMode.ToString() ||
             _text.Text != macro.Text ||
             (int)_textDelay.Value != (macro.TextDelayMs == 0 ? 25 : macro.TextDelayMs) ||
             _steps.Rows.Count != macro.Steps.Count)

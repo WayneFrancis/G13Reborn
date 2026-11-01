@@ -1,3 +1,4 @@
+using System.Text.Json;
 using G13Reborn.Mapping;
 
 namespace G13Reborn.Config;
@@ -10,6 +11,10 @@ namespace G13Reborn.Config;
 internal sealed class MacroEditorDialog : Form
 {
     private readonly List<MacroDefinition> _macros;
+    // Tracks identity from the beginning of this editor session even when
+    // macros are renamed multiple times or duplicated/deleted in the list.
+    private readonly List<string?> _originalNames;
+    private readonly string _originalFingerprint;
     private readonly ListBox _list = new() { Dock = DockStyle.Fill };
     private readonly TextBox _name = new() { Dock = DockStyle.Fill };
     private readonly ComboBox _mode = new()
@@ -79,10 +84,13 @@ internal sealed class MacroEditorDialog : Form
     private int _loadedIndex = -1;
 
     public IReadOnlyList<MacroDefinition>? Result { get; private set; }
+    public IReadOnlyDictionary<string, string>? Renames { get; private set; }
 
     public MacroEditorDialog(IEnumerable<MacroDefinition> existing)
     {
         _macros = existing.Select(m => m.Clone()).ToList();
+        _originalNames = _macros.Select(m => (string?)m.Name).ToList();
+        _originalFingerprint = JsonSerializer.Serialize(_macros);
         Text = "G13Reborn — Macro Editor";
         Size = new Size(940, 720);
         MinimumSize = new Size(760, 560);
@@ -107,8 +115,9 @@ internal sealed class MacroEditorDialog : Form
         left.Controls.Add(_list, 0, 1);
         var listButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };
         var create = new Button { Text = "New", AutoSize = true };
+        var duplicate = new Button { Text = "Duplicate", AutoSize = true };
         var delete = new Button { Text = "Delete", AutoSize = true };
-        listButtons.Controls.AddRange(new Control[] { create, delete });
+        listButtons.Controls.AddRange(new Control[] { create, duplicate, delete });
         left.Controls.Add(listButtons, 0, 2);
         root.Controls.Add(left, 0, 0);
 
@@ -262,6 +271,7 @@ internal sealed class MacroEditorDialog : Form
         _list.SelectedIndexChanged += (_, _) => SelectionChanged();
         _mode.SelectedIndexChanged += (_, _) => UpdateMode();
         create.Click += (_, _) => AddMacro();
+        duplicate.Click += (_, _) => DuplicateMacro();
         delete.Click += (_, _) => DeleteMacro();
         _addStep.Click += (_, _) => InsertManualStep(before: false);
         _insertBefore.Click += (_, _) => InsertManualStep(before: true);
@@ -276,6 +286,17 @@ internal sealed class MacroEditorDialog : Form
         _applyKeyUpDelay.Click += (_, _) =>
             ApplyTiming(MacroStepKind.KeyUp, (int)_keyUpDelay.Value);
         save.Click += (_, _) => SaveClicked();
+        FormClosing += (_, e) =>
+        {
+            if (Result is not null || !HasEditorChanges()) return;
+            var discard = MessageBox.Show(this,
+                "Discard the unsaved macro editor changes?",
+                "Unsaved macro changes",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (discard == DialogResult.Yes) return;
+            e.Cancel = true;
+            DialogResult = DialogResult.None;
+        };
 
         RefreshList(_macros.Count > 0 ? 0 : -1);
     }
@@ -712,6 +733,15 @@ internal sealed class MacroEditorDialog : Form
                 string.Equals(m.Name, macro.Name, StringComparison.OrdinalIgnoreCase)))
                 throw new ArgumentException($"Macro '{macro.Name}' already exists.");
             _macros[_loadedIndex] = macro;
+            // Keep the list label synchronized with edits to macro names.
+            if (!_loading && _loadedIndex < _list.Items.Count &&
+                !string.Equals(_list.Items[_loadedIndex]?.ToString(), macro.Name,
+                    StringComparison.Ordinal))
+            {
+                _loading = true;
+                try { _list.Items[_loadedIndex] = macro.Name; }
+                finally { _loading = false; }
+            }
             return true;
         }
         catch (Exception ex)
@@ -745,15 +775,67 @@ internal sealed class MacroEditorDialog : Form
             m.Name, $"Macro {i}", StringComparison.OrdinalIgnoreCase))) i++;
 
         _macros.Add(new MacroDefinition { Name = $"Macro {i}", Text = "Hello" });
+        _originalNames.Add(null);
         RefreshList(_macros.Count - 1);
+    }
+
+    private void DuplicateMacro()
+    {
+        if (_loadedIndex < 0 || !CommitCurrent()) return;
+        try
+        {
+            var copy = MacroCatalogEdits.Duplicate(_macros[_loadedIndex], _macros);
+            _macros.Insert(_loadedIndex + 1, copy);
+            _originalNames.Insert(_loadedIndex + 1, null);
+            RefreshList(_loadedIndex + 1);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Cannot duplicate macro",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void DeleteMacro()
     {
         if (_loadedIndex < 0) return;
+        if (MessageBox.Show(this,
+            $"Delete macro '{_macros[_loadedIndex].Name}'? Assigned G-keys " +
+            "will be cleared when the macro editor changes are accepted.",
+            "Delete macro", MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
         int next = Math.Max(0, _loadedIndex - 1);
         _macros.RemoveAt(_loadedIndex);
+        _originalNames.RemoveAt(_loadedIndex);
         RefreshList(_macros.Count == 0 ? -1 : next);
+    }
+
+    private bool HasEditorChanges()
+    {
+        if (!string.Equals(JsonSerializer.Serialize(_macros),
+            _originalFingerprint, StringComparison.Ordinal))
+            return true;
+        if (_loadedIndex < 0) return false;
+
+        var macro = _macros[_loadedIndex];
+        if (_name.Text.Trim() != macro.Name ||
+            _mode.SelectedItem?.ToString() != macro.Mode.ToString() ||
+            _text.Text != macro.Text ||
+            (int)_textDelay.Value != (macro.TextDelayMs == 0 ? 25 : macro.TextDelayMs) ||
+            _steps.Rows.Count != macro.Steps.Count)
+            return true;
+
+        for (int i = 0; i < _steps.Rows.Count; i++)
+        {
+            DataGridViewRow row = _steps.Rows[i];
+            MacroStep saved = macro.Steps[i];
+            if (row.Cells[0].Value?.ToString() != saved.Kind.ToString() ||
+                row.Cells[1].Value?.ToString()?.Trim() != saved.Parameter ||
+                row.Cells[2].Value?.ToString() != saved.DelayAfterMs.ToString())
+                return true;
+        }
+        return false;
     }
 
     private void SaveClicked()
@@ -762,6 +844,7 @@ internal sealed class MacroEditorDialog : Form
         try
         {
             foreach (MacroDefinition macro in _macros) macro.Validate();
+            Renames = MacroCatalogEdits.BuildRenames(_originalNames, _macros);
             Result = _macros.Select(m => m.Clone()).ToList();
             DialogResult = DialogResult.OK;
             Close();

@@ -868,10 +868,12 @@ var secondDuplicate = MacroCatalogEdits.Duplicate(managedOriginal,
 Check(secondDuplicate.Name == "AdvMacro copy 2",
     "Repeated duplicates receive collision-free numbered names");
 var caseDuplicate = MacroCatalogEdits.Duplicate(managedOriginal,
-    managedCollection.Append(firstDuplicate.Clone() is MacroDefinition c
-        ? new MacroDefinition { Name = "ADVMACRO COPY 2", Mode = MacroMode.Text, Text = "X" }
-        : managedSecond));
-Check(caseDuplicate.Name == "AdvMacro copy 3" || caseDuplicate.Name == "AdvMacro copy 2",
+    managedCollection.Append(firstDuplicate).Append(
+        new MacroDefinition
+        {
+            Name = "ADVMACRO COPY 2", Mode = MacroMode.Text, Text = "X"
+        }));
+Check(caseDuplicate.Name == "AdvMacro copy 3",
     "Duplicate naming uses case-insensitive collision checks");
 
 var editedOriginals = new List<MacroDefinition>

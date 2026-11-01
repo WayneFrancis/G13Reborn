@@ -37,6 +37,25 @@ public static class SequenceEditOperations
     }
 
     /// <summary>
+    /// Calculate where a manual Add step or Insert before operation goes.
+    /// A missing selection means append for Add, prepend for Insert before.
+    /// </summary>
+    public static int GetInsertionIndex(
+        int stepCount, int? selectedIndex, bool before)
+    {
+        if (stepCount < 0 || stepCount >= MacroRecordingSession.MaximumSteps)
+            throw new ArgumentOutOfRangeException(nameof(stepCount),
+                $"Sequence must have fewer than {MacroRecordingSession.MaximumSteps} steps.");
+        if (selectedIndex.HasValue &&
+            (selectedIndex.Value < 0 || selectedIndex.Value >= stepCount))
+            throw new ArgumentOutOfRangeException(nameof(selectedIndex));
+
+        return selectedIndex.HasValue
+            ? selectedIndex.Value + (before ? 0 : 1)
+            : (before ? 0 : stepCount);
+    }
+
+    /// <summary>
     /// Set the DelayAfterMs of all matching keyboard press or release events.
     /// In particular, a KeyDown delay controls held-key duration until KeyUp,
     /// while a KeyUp delay controls spacing before the next step.

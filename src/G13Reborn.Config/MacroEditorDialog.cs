@@ -85,6 +85,8 @@ internal sealed class MacroEditorDialog : Form
         Text = "Apply key-up", AutoSize = true
     };
     private bool _loading;
+    // Prevent partial row edits from rebuilding parameter cells mid-swap.
+    private bool _updatingStepParameter;
     private int _loadedIndex = -1;
 
     public IReadOnlyList<MacroDefinition>? Result { get; private set; }
@@ -202,8 +204,15 @@ internal sealed class MacroEditorDialog : Form
         _steps.DataError += (_, e) => { e.ThrowException = false; };
         _steps.CellValueChanged += (_, e) =>
         {
-            if (e.RowIndex >= 0 && e.ColumnIndex == 0)
+            if (!_loading && !_updatingStepParameter &&
+                e.RowIndex >= 0 && e.ColumnIndex == 0)
                 UpdateStepParameterEditor(_steps.Rows[e.RowIndex]);
+        };
+        _steps.EditingControlShowing += (_, e) =>
+        {
+            if (_steps.CurrentCell?.ColumnIndex == 1 &&
+                e.Control is DataGridViewComboBoxEditingControl mouseEditor)
+                mouseEditor.DropDownStyle = ComboBoxStyle.DropDownList;
         };
         _steps.SelectionChanged += (_, _) => UpdateSelectionInfo();
         _steps.CurrentCellChanged += (_, _) => UpdateSelectionInfo();
@@ -368,22 +377,57 @@ internal sealed class MacroEditorDialog : Form
 
     private void UpdateStepParameterEditor(DataGridViewRow row)
     {
-        bool isDelay = row.Cells[0].Value?.ToString() ==
-            nameof(MacroStepKind.Delay);
-        DataGridViewCell parameter = row.Cells[1];
-        if (isDelay)
+        if (!Enum.TryParse(row.Cells[0].Value?.ToString(), out MacroStepKind kind))
+            return;
+
+        MacroStepKind? previousKind = row.Cells[0].Tag is MacroStepKind old
+            ? old : null;
+        var editorType = MacroStepParameterChoices.TypeFor(kind);
+        DataGridViewCell current = row.Cells[1];
+        string value = MacroStepParameterChoices.ParameterFor(
+            kind, current.Value?.ToString(), previousKind);
+        bool useCombo = editorType == MacroStepParameterType.MouseButton;
+
+        // DataGridViewTextBoxColumn supports per-row ComboBoxCell overrides:
+        // only mouse actions have a button chooser.
+        _updatingStepParameter = true;
+        try
         {
-            // Old profiles or a changed action may contain a stale key:
-            // Delay never uses a key/mouse parameter.
-            parameter.Value = "";
-            if (_steps.CurrentCell == parameter && _steps.IsCurrentCellInEditMode)
-                _steps.EndEdit();
+            if (useCombo != (current is DataGridViewComboBoxCell))
+            {
+                DataGridViewCell nextCell;
+                if (useCombo)
+                {
+                    var combo = new DataGridViewComboBoxCell
+                    {
+                        FlatStyle = FlatStyle.Flat,
+                        DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
+                        ToolTipText = "Select Left, Right, or Middle."
+                    };
+                    // An empty value is valid only while editing; Validate()
+                    // rejects saving mouse steps without a selected button.
+                    combo.Items.Add("");
+                    foreach (string button in MacroStepParameterChoices.MouseButtons)
+                        combo.Items.Add(button);
+                    nextCell = combo;
+                }
+                else
+                    nextCell = new DataGridViewTextBoxCell();
+                row.Cells[1] = nextCell;
+                current = nextCell;
+            }
+            current.Value = value;
+            current.ReadOnly = editorType == MacroStepParameterType.None;
+            current.Style.BackColor = current.ReadOnly
+                ? SystemColors.Control : _steps.DefaultCellStyle.BackColor;
+            current.Style.ForeColor = current.ReadOnly
+                ? SystemColors.GrayText : _steps.DefaultCellStyle.ForeColor;
+            current.ToolTipText = current.ReadOnly
+                ? "This action does not need a key or mouse button."
+                : useCombo ? "Select Left, Right, or Middle." : "";
+            row.Cells[0].Tag = kind;
         }
-        parameter.ReadOnly = isDelay;
-        parameter.Style.BackColor = isDelay
-            ? SystemColors.Control : _steps.DefaultCellStyle.BackColor;
-        parameter.Style.ForeColor = isDelay
-            ? SystemColors.GrayText : _steps.DefaultCellStyle.ForeColor;
+        finally { _updatingStepParameter = false; }
     }
 
     private void UpdateStepParameterEditors()
@@ -517,10 +561,15 @@ internal sealed class MacroEditorDialog : Form
         IReadOnlyList<MacroStep> steps, int firstSelection, int selectedCount)
     {
         _steps.EndEdit();
-        _steps.Rows.Clear();
-        foreach (MacroStep step in steps)
-            _steps.Rows.Add(step.Kind.ToString(), step.Parameter,
-                step.DelayAfterMs.ToString());
+        _updatingStepParameter = true;
+        try
+        {
+            _steps.Rows.Clear();
+            foreach (MacroStep step in steps)
+                _steps.Rows.Add(step.Kind.ToString(), step.Parameter,
+                    step.DelayAfterMs.ToString());
+        }
+        finally { _updatingStepParameter = false; }
         UpdateStepParameterEditors();
 
         ClearStepSelection();
@@ -639,11 +688,24 @@ internal sealed class MacroEditorDialog : Form
             here[column] = _steps.Rows[index].Cells[column].Value;
             there[column] = _steps.Rows[other].Cells[column].Value;
         }
-        for (int column = 0; column < _steps.Columns.Count; column++)
+        _updatingStepParameter = true;
+        try
         {
-            _steps.Rows[index].Cells[column].Value = there[column];
-            _steps.Rows[other].Cells[column].Value = here[column];
+            // Swap the complete values first; rebuild each row's editor
+            // afterward so swapping a mouse row with a keyboard row
+            // does not attempt to put an arbitrary key into a combo box.
+            // Use textbox cells temporarily for incompatible values.
+            _steps.Rows[index].Cells[1] = new DataGridViewTextBoxCell();
+            _steps.Rows[other].Cells[1] = new DataGridViewTextBoxCell();
+            for (int column = 0; column < _steps.Columns.Count; column++)
+            {
+                _steps.Rows[index].Cells[column].Value = there[column];
+                _steps.Rows[other].Cells[column].Value = here[column];
+            }
+            _steps.Rows[index].Cells[0].Tag = null;
+            _steps.Rows[other].Cells[0].Tag = null;
         }
+        finally { _updatingStepParameter = false; }
         UpdateStepParameterEditor(_steps.Rows[index]);
         UpdateStepParameterEditor(_steps.Rows[other]);
         _steps.CurrentCell = _steps.Rows[other].Cells[0];
@@ -687,7 +749,9 @@ internal sealed class MacroEditorDialog : Form
             {
                 Kind = Enum.Parse<MacroStepKind>(
                     row.Cells[0].Value?.ToString() ?? "Delay"),
-                Parameter = row.Cells[0].Value?.ToString() == nameof(MacroStepKind.Delay)
+                Parameter = Enum.TryParse<MacroStepKind>(
+                    row.Cells[0].Value?.ToString(), out var kind) &&
+                    MacroStepParameterChoices.TypeFor(kind) == MacroStepParameterType.None
                     ? "" : row.Cells[1].Value?.ToString()?.Trim() ?? "",
                 DelayAfterMs = int.Parse(row.Cells[2].Value?.ToString() ?? "0")
             };

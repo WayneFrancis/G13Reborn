@@ -1393,7 +1393,7 @@ Check(m2Engine.ReleaseAll().SequenceEqual(new[]
 {
     new InputEvent(InputEventKind.KeyUp, 0x42)
 }), "layer switching can release the previous layer's held keyboard input");
-var noMkeys = G13MappingLayers.WithoutModeKeys(m2Input);
+var noMkeys = G13MappingLayers.WithoutModeKeys(m2Input!);
 Check(!noMkeys.IsPhysicalBitPressed(G13MappingLayers.M2Bit) &&
       m2Input!.IsPhysicalBitPressed(G13MappingLayers.M2Bit),
     "input filtering removes M mode controls without modifying the original HID report");

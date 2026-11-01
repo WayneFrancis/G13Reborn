@@ -3,7 +3,8 @@ using G13Reborn.Mapping;
 namespace G13Reborn.Config;
 
 /// <summary>
-/// Edits profile-owned text and step-sequence macros. No live input is emitted.
+/// Edits profile-owned text and step-sequence macros. Live output is
+/// emitted only through the explicitly invoked, cancellable test dialog.
 /// A successful Save replaces the in-memory macros; Cancel leaves them intact.
 /// </summary>
 internal sealed class MacroEditorDialog : Form
@@ -37,6 +38,10 @@ internal sealed class MacroEditorDialog : Form
     private readonly Button _recordSteps = new()
     {
         Text = "Record / insert steps...", AutoSize = true
+    };
+    private readonly Button _testMacro = new()
+    {
+        Text = "Test macro...", Width = 115, Height = 32
     };
     private readonly NumericUpDown _keyDownDelay = new()
     {
@@ -205,7 +210,7 @@ internal sealed class MacroEditorDialog : Form
             Text = "Cancel", Width = 90, Height = 32,
             DialogResult = DialogResult.Cancel
         };
-        bottom.Controls.AddRange(new Control[] { save, cancel });
+        bottom.Controls.AddRange(new Control[] { save, cancel, _testMacro });
         root.Controls.Add(bottom, 0, 1);
         root.SetColumnSpan(bottom, 2);
         CancelButton = cancel;
@@ -221,6 +226,7 @@ internal sealed class MacroEditorDialog : Form
                 _steps.Rows.Remove(_steps.CurrentRow);
         };
         _recordSteps.Click += (_, _) => RecordSteps();
+        _testMacro.Click += (_, _) => TestMacro();
         _stepUp.Click += (_, _) => MoveStep(-1);
         _stepDown.Click += (_, _) => MoveStep(+1);
         _applyKeyDownDelay.Click += (_, _) =>
@@ -290,6 +296,7 @@ internal sealed class MacroEditorDialog : Form
         // It is valid to start recording while editing a Text macro.
         // Accepting converts that macro to Steps, without changing its name.
         _recordSteps.Enabled = active;
+        _testMacro.Enabled = active;
     }
 
     private void MoveStep(int direction)
@@ -413,6 +420,22 @@ internal sealed class MacroEditorDialog : Form
             MessageBox.Show(this, ex.Message, "Could not insert recording",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    private void TestMacro()
+    {
+        if (_loadedIndex < 0)
+            return;
+
+        // The editor's current values, including any unsaved step edits,
+        // are used for the preview. This does not save profiles.json and
+        // does not require the macro to be assigned to a G-key.
+        if (!CommitCurrent())
+            return;
+
+        var snapshot = _macros[_loadedIndex].Clone();
+        using var dialog = new MacroTestDialog(snapshot);
+        dialog.ShowDialog(this);
     }
 
     private bool CommitCurrent(bool allowEmptySequence = false)

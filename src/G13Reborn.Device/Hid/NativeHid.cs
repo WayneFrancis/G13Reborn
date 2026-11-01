@@ -184,6 +184,16 @@ internal static class NativeHid
                 "The G13 refused the feature report.");
     }
 
+    [DllImport("hid.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool HidD_GetFeature(SafeFileHandle device, [In, Out] byte[] report, int reportLength);
+
+    internal static void GetFeature(SafeFileHandle handle, byte[] report)
+    {
+        if (!HidD_GetFeature(handle, report, report.Length))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Feature read failed.");
+    }
+
     internal static bool TryGetVersion(SafeFileHandle handle, out ushort version)
     {
         var attrs = new HidAttributes { Size = Marshal.SizeOf<HidAttributes>() };

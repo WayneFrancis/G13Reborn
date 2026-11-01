@@ -79,7 +79,7 @@ Check(firstEvents.SequenceEqual(new[]
     new InputEvent(InputEventKind.KeyDown, 0x11),
     new InputEvent(InputEventKind.KeyDown, 0x41)
 }), "Ctrl+A emits modifier before A");
-Check(engine.Apply(g1).Count == 0, "held key does not auto-repeat");
+Check(engine.Apply(g1!).Count == 0, "held key does not auto-repeat");
 
 G13InputReport.TryParse(new byte[] { 1, 127, 127, 0b0000_0011, 0, 0, 0, 0 }, out var g1g2);
 Check(engine.Apply(g1g2!).SequenceEqual(
@@ -158,13 +158,13 @@ fallbackProfile.ExecutableNames.Clear();
 var heldGate = new ButtonReleaseGate();
 heldGate.BlockCurrentlyHeld(g1g2);
 Check(!heldGate.Filter(g1g2!).IsPhysicalBitPressed(0) &&
-    !heldGate.Filter(g1g2).IsPhysicalBitPressed(1),
+    !heldGate.Filter(g1g2!).IsPhysicalBitPressed(1),
     "held keys suppressed immediately after profile change");
 Check(!heldGate.Filter(g2!).IsPhysicalBitPressed(1),
     "still-held key remains suppressed even if another key released");
 G13InputReport.TryParse(new byte[] { 1, 127, 127, 0, 0, 0, 0, 0 }, out var emptyReport);
 heldGate.Filter(emptyReport!);
-Check(heldGate.Filter(g2).IsPhysicalBitPressed(1),
+Check(heldGate.Filter(g2!).IsPhysicalBitPressed(1),
     "previously held key may trigger once physically released and pressed again");
 Console.WriteLine("Automatic profile switching tests passed.");
 

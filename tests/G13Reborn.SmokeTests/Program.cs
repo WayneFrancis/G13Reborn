@@ -1045,3 +1045,113 @@ try { G13HardwareReports.ReadMacroLedMask(new byte[] { 0x07, 1, 0, 0, 0 }); }
 catch (ArgumentException) { wrongLedReportRejected = true; }
 Check(wrongLedReportRejected, "LED readback rejects RGB report IDs");
 Console.WriteLine("M-key LED readback decoding tests passed.");
+
+
+// Macro repeat modes are persisted with each macro; older profiles default
+// to Once. The preview remains a deliberate single-pass test.
+var loopOnce = new MacroDefinition
+{
+    Name = "Once on G1", Mode = MacroMode.Steps,
+    RepeatMode = MacroRepeatMode.Once,
+    Steps = new() { new() { Kind = MacroStepKind.WheelUp } }
+};
+var loopHeld = loopOnce.Clone();
+loopHeld.Name = "Held on G1";
+loopHeld.RepeatMode = MacroRepeatMode.WhileHeld;
+var loopToggle = loopHeld.Clone();
+loopToggle.Name = "Toggle on G1";
+loopToggle.RepeatMode = MacroRepeatMode.Toggle;
+Check(loopHeld.Clone().RepeatMode == MacroRepeatMode.WhileHeld &&
+      loopToggle.Clone().RepeatMode == MacroRepeatMode.Toggle,
+    "cloned macros retain repeat mode without changing original");
+Check(loopOnce.RepeatMode == MacroRepeatMode.Once,
+    "new macro defaults to nonlooping Once");
+var oldMacro = System.Text.Json.JsonSerializer.Deserialize<MacroDefinition>(
+    "{\\\"Name\\\":\\\"Legacy\\\",\\\"Mode\\\":0,\\\"Text\\\":\\\"Hi\\\"}");
+Check(oldMacro is not null && oldMacro.RepeatMode == MacroRepeatMode.Once,
+    "old saved macro without RepeatMode loads as Once");
+bool badRepeatRejected = false;
+try { var broken = loopOnce.Clone();
+    broken.RepeatMode = (MacroRepeatMode)99; broken.Validate(); }
+catch (ArgumentException) { badRepeatRejected = true; }
+Check(badRepeatRejected, "invalid repeat modes are rejected");
+
+Check(MacroRepeatPolicy.OnTransition(MacroRepeatMode.Once, true, false) ==
+      MacroRepeatAction.Start &&
+      MacroRepeatPolicy.OnTransition(MacroRepeatMode.Once, false, true) ==
+      MacroRepeatAction.Ignore,
+    "Once triggers on key press, not release");
+Check(MacroRepeatPolicy.OnTransition(MacroRepeatMode.WhileHeld, true, false) ==
+      MacroRepeatAction.Start &&
+      MacroRepeatPolicy.OnTransition(MacroRepeatMode.WhileHeld, false, true) ==
+      MacroRepeatAction.Stop &&
+      MacroRepeatPolicy.OnTransition(MacroRepeatMode.WhileHeld, false, false) ==
+      MacroRepeatAction.Ignore,
+    "WhileHeld starts on press and stops only on its owning key release");
+Check(MacroRepeatPolicy.OnTransition(MacroRepeatMode.Toggle, true, false) ==
+      MacroRepeatAction.Start &&
+      MacroRepeatPolicy.OnTransition(MacroRepeatMode.Toggle, false, true) ==
+      MacroRepeatAction.Ignore &&
+      MacroRepeatPolicy.OnTransition(MacroRepeatMode.Toggle, true, true) ==
+      MacroRepeatAction.Stop,
+    "Toggle starts on first press and stops on the next press, ignoring release");
+
+var holdProfile = MappingProfile.CreateDefault("Holding");
+holdProfile.Macros.Add(loopHeld);
+holdProfile.Buttons[0] = new ButtonAction
+{
+    Kind = MappingKind.Macro, Parameter = loopHeld.Name
+};
+holdProfile.Validate();
+var holdDetector = new MacroTriggerDetector(holdProfile);
+Check(holdDetector.DetectTransitions(g1!).Single() ==
+      new MacroButtonTransition(0, loopHeld.Name, true),
+    "macro G-key press edge reports physical bit and macro name");
+Check(holdDetector.DetectTransitions(g1!).Count == 0,
+    "repeated HID reports do not produce repeat press edges");
+Check(holdDetector.DetectTransitions(emptyReport!).Single() ==
+      new MacroButtonTransition(0, loopHeld.Name, false),
+    "macro G-key release edge is detected for WhileHeld cancellation");
+Check(holdDetector.DetectTransitions(emptyReport!).Count == 0,
+    "repeated released HID reports do not produce duplicate stop edges");
+
+var onceEvents = new List<InputEvent>();
+int onceReleaseCalls = 0;
+await MacroRepeatRunner.ExecuteAsync(loopOnce, onceEvents.Add,
+    _ => { }, () => onceReleaseCalls++, CancellationToken.None);
+Check(onceEvents.Count == 1 && onceReleaseCalls == 0,
+    "Once executes a single pass without repeating");
+
+using var repeatingCancel = new CancellationTokenSource();
+var repeatEvents = new List<InputEvent>();
+int repeatReleaseCalls = 0;
+bool repeatingCancelled = false;
+try
+{
+    await MacroRepeatRunner.ExecuteAsync(loopToggle, action =>
+    {
+        repeatEvents.Add(action);
+        if (repeatEvents.Count >= 3) repeatingCancel.Cancel();
+    }, _ => { }, () => repeatReleaseCalls++, repeatingCancel.Token);
+}
+catch (OperationCanceledException) { repeatingCancelled = true; }
+Check(repeatingCancelled && repeatEvents.Count == 3 &&
+      repeatReleaseCalls == 2 &&
+      MacroRepeatRunner.MinimumRepeatGapMs > 0,
+    "Toggle repeats until cancelled, releases between passes and throttles fast loops");
+
+var delayStep = new MacroStep
+{
+    Kind = MacroStepKind.Delay, Parameter = "", DelayAfterMs = 200
+};
+delayStep.Validate();
+var delayOnly = new MacroDefinition
+{
+    Name = "Pause", Mode = MacroMode.Steps,
+    Steps = new() { delayStep }
+};
+var delayEvents = new List<InputEvent>();
+await MacroPlayback.ExecuteAsync(delayOnly, delayEvents.Add, _ => { });
+Check(delayEvents.Count == 0 && delayStep.Parameter == "",
+    "Delay-only macro needs no key or mouse parameter and emits no input");
+Console.WriteLine("Macro repeat, trigger transitions and Delay regressions passed.");

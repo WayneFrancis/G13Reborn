@@ -409,3 +409,27 @@ If Windows refuses the read command, the dialog distinguishes
 The checkbox controls do **not** automatically write reports; press
 **Apply M LEDs** to send changes. The first G13 LCD and RGB
 implementations remain unchanged.
+
+
+## Macro repeat modes and Delay actions
+
+Macro Editor now includes **Repeat** next to Macro type:
+
+- **Once** (default for existing macros): execute a single pass for each new G-key press.
+- **WhileHeld**: repeat the macro until its assigned G-key is released.
+- **Toggle**: one press starts repeating, release does not stop it; the next press of the *same physical G-key* stops it.
+
+Only one macro can run at a time. A running loop stops if forwarding
+stops, the active profile changes, or its required release/second press
+is detected. Each pass releases macro-held keys/mouse buttons before
+repeating and has a minimum 25ms repeat gap to avoid uncontrolled
+zero-delay loops. A new macro start while another is already running is
+ignored rather than queued. **Test macro...** runs one pass, even for
+looped macros, so preview cannot start an unattended infinite loop.
+
+**Delay** sequence steps have a blank, disabled **Key / mouse button**
+cell; their duration is **Delay after (ms)**. Changing another step
+into Delay clears its old parameter. Changing it back permits parameter
+editing. Copy/paste, step reorder and recording insertion retain this rule.
+These editor changes do not affect the standalone hardware macro
+profile protocol; they are supported by software forwarding.

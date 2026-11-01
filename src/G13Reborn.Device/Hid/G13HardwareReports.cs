@@ -28,6 +28,18 @@ public static class G13HardwareReports
         };
 
     /// <summary>
+    /// Decode the macro LED mask from the device's 5-byte feature report.
+    /// Only low four bits are M1/M2/M3/MR, in that order.
+    /// This is a read of actual device state, not the requested checkbox state.
+    /// </summary>
+    public static byte ReadMacroLedMask(ReadOnlySpan<byte> report)
+    {
+        if (report.Length < FeatureLength || report[0] != MacroLedReportId)
+            throw new ArgumentException("Not a G13 macro LED feature report.", nameof(report));
+        return (byte)(report[1] & 0x0F);
+    }
+
+    /// <summary>
     /// LCD uses six 8-pixel-tall bands. A set bit means a dark/active
     /// pixel. Byte 0 is 3, bytes 1..31 are 0, pixels start at offset 32.
     /// </summary>

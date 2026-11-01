@@ -13,6 +13,25 @@ public static class G13OutputDevice
         G13DeviceInfo device, bool m1, bool m2, bool m3, bool mr) =>
         SendFeature(device, G13HardwareReports.MacroLeds(m1, m2, m3, mr));
 
+    /// <summary>
+    /// Return the device's current M1/M2/M3/MR LED mask, not our last
+    /// requested mask. Useful for detecting a competing controller.
+    /// </summary>
+    public static byte ReadMacroLedMask(G13DeviceInfo device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        CheckG13(device);
+        if (device.FeatureReportLength < G13HardwareReports.FeatureLength ||
+            device.FeatureReportLength > 4096)
+            throw new NotSupportedException("Selected HID interface cannot read G13 LED reports.");
+
+        byte[] report = new byte[device.FeatureReportLength];
+        report[0] = G13HardwareReports.MacroLedReportId;
+        using var handle = NativeHid.OpenForFeatureRead(device.Path);
+        NativeHid.GetFeature(handle, report);
+        return G13HardwareReports.ReadMacroLedMask(report);
+    }
+
     private static void SendFeature(G13DeviceInfo device, byte[] payload)
     {
         ArgumentNullException.ThrowIfNull(device);

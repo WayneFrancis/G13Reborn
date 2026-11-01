@@ -1,4 +1,5 @@
 using G13Reborn.Device.Hid;
+using G13Reborn.Mapping;
 
 namespace G13Reborn.Config;
 
@@ -48,13 +49,21 @@ internal sealed class G13HardwareDialog : Form
     private readonly Button _readLeds = new() { Text = "Read LEDs", AutoSize = true };
     private readonly Button _testLcd = new() { Text = "Send test pattern", AutoSize = true };
     private readonly Button _clearLcd = new() { Text = "Clear LCD", AutoSize = true };
+    private readonly Button _snapshot = new()
+    {
+        Text = "Save read-only HID snapshot...", AutoSize = true
+    };
+    private readonly Button _backup = new()
+    {
+        Text = "Backup local profiles (ZIP)...", AutoSize = true
+    };
 
     public G13HardwareDialog()
     {
-        Text = "G13Reborn — LCD and backlight diagnostics";
+        Text = "G13Reborn — Hardware diagnostics and safe backup";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(780, 510);
-        MinimumSize = new Size(680, 460);
+        Size = new Size(810, 555);
+        MinimumSize = new Size(720, 510);
         MaximizeBox = false;
         MinimizeBox = false;
 
@@ -62,7 +71,7 @@ internal sealed class G13HardwareDialog : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(14),
-            ColumnCount = 1, RowCount = 8
+            ColumnCount = 1, RowCount = 9
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
@@ -71,6 +80,7 @@ internal sealed class G13HardwareDialog : Form
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(root);
 
@@ -124,6 +134,15 @@ internal sealed class G13HardwareDialog : Form
         var lcdButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };
         lcdButtons.Controls.AddRange(new Control[] { _testLcd, _clearLcd });
         root.Controls.Add(lcdButtons, 0, 6);
+
+        var researchButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        researchButtons.Controls.AddRange(new Control[] { _snapshot, _backup });
+        researchButtons.Controls.Add(new Label
+        {
+            Text = "No firmware commands or onboard profile reads",
+            AutoSize = true, Padding = new Padding(5, 7, 0, 0)
+        });
+        root.Controls.Add(researchButtons, 0, 7);
         var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
@@ -134,7 +153,7 @@ internal sealed class G13HardwareDialog : Form
         };
         bottom.Controls.Add(_result, 0, 0);
         bottom.Controls.Add(close, 1, 0);
-        root.Controls.Add(bottom, 0, 7);
+        root.Controls.Add(bottom, 0, 8);
         CancelButton = close;
 
         refresh.Click += (_, _) => RefreshInterfaces();
@@ -150,6 +169,8 @@ internal sealed class G13HardwareDialog : Form
         };
         _rgbApply.Click += (_, _) => ApplyRgb();
         _ledApply.Click += (_, _) => ApplyLeds();
+        _snapshot.Click += (_, _) => SaveReadOnlySnapshot();
+        _backup.Click += (_, _) => BackupLocalProfiles();
         _readLeds.Click += (_, _) => ReadLeds();
         _testLcd.Click += async (_, _) =>
             await SendLcdAsync(G13HardwareReports.TestPattern(), "Test pattern sent.");
@@ -270,6 +291,57 @@ internal sealed class G13HardwareDialog : Form
             if (!IsDisposed)
                 _testLcd.Enabled = _clearLcd.Enabled = true;
         }
+    }
+
+    private void SaveReadOnlySnapshot()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Save read-only G13 HID snapshot (NOT onboard profiles)",
+            Filter = "JSON diagnostics (*.json)|*.json",
+            DefaultExt = "json",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = "G13-HID-snapshot-" +
+                DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        _snapshot.Enabled = false;
+        try
+        {
+            // Enumerates descriptors and sends GET (never SET) for
+            // previously verified feature IDs 05 and 07 only.
+            var snapshot = G13ReadOnlySnapshot.Capture();
+            File.WriteAllText(dialog.FileName, snapshot.ToJson());
+            _result.Text = $"Saved {snapshot.Interfaces.Count} HID collection(s) " +
+                "and known live feature states (not stored onboard profiles).";
+        }
+        catch (Exception ex) { ShowError("Could not save HID snapshot", ex); }
+        finally { _snapshot.Enabled = true; }
+    }
+
+    private void BackupLocalProfiles()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Backup local PC profile files (NOT G13 onboard memory)",
+            Filter = "ZIP archive (*.zip)|*.zip",
+            DefaultExt = "zip",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = "G13-PC-profiles-" +
+                DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        _backup.Enabled = false;
+        try
+        {
+            var result = G13LocalProfileBackup.Create(dialog.FileName);
+            _result.Text = $"Backed up {result.FileCount} LOCAL profile file(s) " +
+                "to ZIP (not onboard device memory).";
+        }
+        catch (Exception ex) { ShowError("Could not backup local profiles", ex); }
+        finally { _backup.Enabled = true; }
     }
 
     private void ShowError(string title, Exception ex)

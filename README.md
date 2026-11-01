@@ -249,3 +249,27 @@ Text tests use the existing reliable 25 ms default character pacing,
 while sequence tests use their configured delays and step ordering.
 Keyboard events in elevated programs and raw-input games may not
 respond to Windows SendInput; Notepad is the initial recommended target.
+
+
+## Manual sequence insertion and playback diagnostics
+
+The Steps editor now has **Add step (after)** and **Insert before**:
+
+- Select a numbered step row before clicking **Add step (after)** to
+  insert the new action immediately after it; with no selection the new
+  action goes at the end.
+- Select a numbered row before clicking **Insert before** to insert
+  the new action immediately before it; with no selection the new
+  action is added at the very beginning, including in an empty macro.
+- The newly inserted row is selected so repeated Add/Insert operations
+  stay at the insertion point. Click **Clear selection** to return to
+  the prepend/append defaults. Row headers display step numbers and
+  a small status line shows the current selection.
+
+The **Test macro...** window now includes a read-only log showing
+the currently executing step, its action and parameter, and the
+configured delay after it. For text macros the progress line shows
+how many UTF-16 code units have been sent, without displaying the
+macro's contents in the log. Logs show completion or cancellation.
+The recorded sequence itself and the existing safe text playback are
+unchanged.

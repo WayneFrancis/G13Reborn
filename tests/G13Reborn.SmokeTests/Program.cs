@@ -665,3 +665,68 @@ Check(errorPropagated && !failingPreview.IsRunning &&
           new InputEvent(InputEventKind.KeyUp, 0x41)
       }), "output failure still triggers a best-effort key release");
 Console.WriteLine("Direct macro preview, cancellation, and held-input cleanup tests passed.");
+
+
+// Manual insertion regressions. These positions are also used by the
+// WinForms button handler, so no-row-selection is never confused with row 1.
+Check(SequenceEditOperations.GetInsertionIndex(0, null, before: false) == 0,
+    "Add step to an empty macro inserts first step");
+Check(SequenceEditOperations.GetInsertionIndex(0, null, before: true) == 0,
+    "Insert before on empty macro also inserts first step");
+Check(SequenceEditOperations.GetInsertionIndex(4, null, before: false) == 4,
+    "Add step with no selection appends after last step");
+Check(SequenceEditOperations.GetInsertionIndex(4, null, before: true) == 0,
+    "Insert before without selection prepends at start");
+Check(SequenceEditOperations.GetInsertionIndex(4, 0, before: false) == 1,
+    "Add step with first row selected inserts after first row");
+Check(SequenceEditOperations.GetInsertionIndex(4, 0, before: true) == 0,
+    "Insert before with first row selected inserts ahead of first row");
+Check(SequenceEditOperations.GetInsertionIndex(4, 2, before: false) == 3 &&
+      SequenceEditOperations.GetInsertionIndex(4, 2, before: true) == 2,
+    "selected middle row supports before and after insertion");
+Check(SequenceEditOperations.GetInsertionIndex(4, 3, before: false) == 4 &&
+      SequenceEditOperations.GetInsertionIndex(4, 3, before: true) == 3,
+    "selected final row supports before and after insertion");
+
+bool wrongManualIndexRejected = false;
+try { SequenceEditOperations.GetInsertionIndex(4, 4, before: false); }
+catch (ArgumentOutOfRangeException) { wrongManualIndexRejected = true; }
+Check(wrongManualIndexRejected, "manual insertion rejects invalid selected row");
+
+bool tooManyManualStepsRejected = false;
+try { SequenceEditOperations.GetInsertionIndex(200, null, before: true); }
+catch (ArgumentOutOfRangeException) { tooManyManualStepsRejected = true; }
+Check(tooManyManualStepsRejected, "manual insertion preserves 200-step macro limit");
+
+// Preview progress reports each step in execution order without changing
+// input playback or the cancellation/held-release behaviour.
+var progressMacro = new MacroDefinition
+{
+    Name = "Progress", Mode = MacroMode.Steps,
+    Steps = new List<MacroStep>
+    {
+        new() { Kind = MacroStepKind.KeyDown, Parameter = "A" },
+        new() { Kind = MacroStepKind.KeyUp, Parameter = "A" },
+        new() { Kind = MacroStepKind.Delay, DelayAfterMs = 1 },
+        new() { Kind = MacroStepKind.WheelUp }
+    }
+};
+var progress = new List<int>();
+var progressEvents = new List<InputEvent>();
+var progressed = new MacroPreviewRunner(progressEvents.Add, _ => { });
+await progressed.RunAsync(progressMacro, default,
+    (index, step) =>
+    {
+        progress.Add(index);
+        Check(progressMacro.Steps[index].Kind == step.Kind,
+            $"preview progress correctly reports action {index + 1}");
+    });
+Check(progress.SequenceEqual(new[] { 0, 1, 2, 3 }),
+    "preview reports every step once in order");
+Check(progressEvents.SequenceEqual(new[]
+{
+    new InputEvent(InputEventKind.KeyDown, 0x41),
+    new InputEvent(InputEventKind.KeyUp, 0x41),
+    new InputEvent(InputEventKind.Wheel, 120)
+}), "progress observers do not affect emitted macro events");
+Console.WriteLine("Manual insertion and macro playback progress regressions passed.");

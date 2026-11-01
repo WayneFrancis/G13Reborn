@@ -88,6 +88,8 @@ public sealed class MainForm : Form
     private bool _running;
     private bool _nativeOutputEnabled;
     private MappingProfile? _activeProfile;
+    private MappingProfile? _effectiveProfile;
+    private int _pendingLayerLedUpdate;
     private ButtonTransitionEngine? _engine;
     private MacroTriggerDetector? _macroDetector;
     private readonly InputOutputRouter _output = new();
@@ -795,10 +797,12 @@ public sealed class MainForm : Form
         try
         {
             var profile = Current().Clone(Current().Name);
-            var engine = new ButtonTransitionEngine(profile);
+            var effectiveProfile = profile.UseMappingLayers ? profile.ForLayer(1) : profile;
+            var engine = new ButtonTransitionEngine(effectiveProfile);
             // Enumerate output-capable HID collections only if hardware
             // status/colour output was explicitly enabled by the user.
-            var outputs = profile.UseProfileRgb || _document.LcdStatusEnabled
+            var outputs = profile.UseProfileRgb || _document.LcdStatusEnabled ||
+                _document.Profiles.Any(p => p.UseMappingLayers)
                 ? G13DeviceDiscovery.Enumerate()
                 : Array.Empty<G13DeviceInfo>();
             G13DeviceInfo? rgb = outputs.FirstOrDefault(x =>
@@ -815,8 +819,12 @@ public sealed class MainForm : Form
             lock (_gate)
             {
                 _activeProfile = profile;
+                _effectiveProfile = effectiveProfile;
+                _activeLayer = 1;
+                _layerSelector.Reset();
+                Interlocked.Exchange(ref _pendingLayerLedUpdate, 0);
                 _engine = engine;
-                _macroDetector = new MacroTriggerDetector(profile);
+                _macroDetector = new MacroTriggerDetector(effectiveProfile);
                 _lastReport = null;
                 _releaseGate.Clear();
                 _vJoy = vjoy;
@@ -825,6 +833,7 @@ public sealed class MainForm : Form
                 _lcdOutputDevice = lcd;
                 _lcdFailed = false;
                 _nextLcdWrite = DateTime.MinValue;
+                _layerLedWarningShown = false;
                 _nativeOutputEnabled = _keyboardMouse.Checked;
                 _cancellation = cancellation;
             }
@@ -834,6 +843,7 @@ public sealed class MainForm : Form
             _status.Text = "Running: " + profile.Name +
                 " — press Stop / release before modifying profiles.";
             ApplyProfileRgb(profile);
+            if (profile.UseMappingLayers) ApplyLayerLeds(1);
             UpdateControlState();
         }
         catch (Exception ex)
@@ -885,17 +895,27 @@ public sealed class MainForm : Form
             if (!Volatile.Read(ref _running))
                 return;
             _lastReport = report;
-            if (_activeProfile is null || _engine is null)
+            if (_activeProfile is null || _engine is null ||
+                _effectiveProfile is null)
                 return;
-            // Held keys at a profile change cannot trigger newly assigned
-            // actions until physically released and pressed again.
+            if (_activeProfile.UseMappingLayers)
+            {
+                int? selected = _layerSelector.Detect(report);
+                if (selected.HasValue && selected.Value != _activeLayer)
+                    SwitchActiveLayerLocked(selected.Value, report);
+                // Reserved physical M keys never become user mappings
+                // while M-layer mode is enabled.
+                report = G13MappingLayers.WithoutModeKeys(report);
+            }
+            // Held controls cannot produce a second press in the new layer
+            // until they have physically been released.
             G13InputReport safeReport = _releaseGate.Filter(report);
             if (_vJoy is not null)
             {
                 _vJoy.Update(
                     report.X, report.Y, _activeProfile.DeadzonePercent / 100.0,
                     _activeProfile.InvertY);
-                _vJoy.UpdateButtons(_activeProfile.GetVirtualButtons(
+                _vJoy.UpdateButtons(_effectiveProfile.GetVirtualButtons(
                     safeReport, _vJoy.ButtonCount));
             }
             if (_nativeOutputEnabled)
@@ -928,6 +948,30 @@ public sealed class MainForm : Form
             }
             Interlocked.Increment(ref _forwardedReports);
         }
+    }
+
+    /// <summary>Called under _gate from the physical input reader.</summary>
+    private void SwitchActiveLayerLocked(int layer, G13InputReport physicalReport)
+    {
+        if (_activeProfile is null || !_activeProfile.UseMappingLayers ||
+            layer == _activeLayer) return;
+
+        // Stop toggle/held macros and release every old-layer key/button.
+        // This prevents sticky keys and duplicate vJoy/keyboard outputs.
+        CancelMacroLocked();
+        if (_engine is not null && _nativeOutputEnabled)
+            foreach (InputEvent action in _engine.ReleaseAll())
+                _output.ApplyNormal(action);
+        _vJoy?.UpdateButtons(0);
+
+        _releaseGate.BlockCurrentlyHeld(physicalReport);
+        _activeLayer = layer;
+        _effectiveProfile = _activeProfile.ForLayer(layer);
+        _engine = new ButtonTransitionEngine(_effectiveProfile);
+        _macroDetector = new MacroTriggerDetector(_effectiveProfile);
+        // HID feature writes happen on the UI thread, not under _gate
+        // inside the input reader.
+        Interlocked.Exchange(ref _pendingLayerLedUpdate, layer);
     }
 
     private void TryStartMacroLocked(MacroDefinition macro, int physicalBit)
@@ -1077,11 +1121,16 @@ public sealed class MainForm : Form
             _engine = null;
             _macroDetector = null;
             _activeProfile = null;
+            _effectiveProfile = null;
+            _activeLayer = 1;
+            _layerSelector.Reset();
+            Interlocked.Exchange(ref _pendingLayerLedUpdate, 0);
             _reader = null;
             _rgbOutputDevice = null;
             _lcdOutputDevice = null;
             _lcdFailed = false;
             _nextLcdWrite = DateTime.MinValue;
+            _layerLedWarningShown = false;
             _readTask = null;
             _cancellation = null;
             _nativeOutputEnabled = false;
@@ -1112,12 +1161,18 @@ public sealed class MainForm : Form
         }
         string activeName;
         string? playingMacro;
+        string activeLayerName;
         lock (_gate)
         {
             activeName = _activeProfile?.Name ?? "(stopped)";
+            activeLayerName = _activeProfile?.UseMappingLayers == true
+                ? $" M{_activeLayer}" : "";
             playingMacro = _playingMacro;
         }
-        _activeProfileInfo.Text = "Active: " + activeName;
+        _activeProfileInfo.Text = "Active: " + activeName + activeLayerName;
+        int selectedLedLayer = Interlocked.Exchange(ref _pendingLayerLedUpdate, 0);
+        if (_running && selectedLedLayer != 0)
+            ApplyLayerLeds(selectedLedLayer);
         _activity.Text =
             $"HID input reports: {Interlocked.Read(ref _inputReports):N0}  |  " +
             $"Processed reports: {Interlocked.Read(ref _forwardedReports):N0}  |  " +
@@ -1130,7 +1185,7 @@ public sealed class MainForm : Form
             DateTime.UtcNow >= _nextLcdWrite)
         {
             _nextLcdWrite = DateTime.UtcNow.AddSeconds(1);
-            _ = UpdateLcdStatusAsync(activeName, playingMacro);
+            _ = UpdateLcdStatusAsync(activeName + activeLayerName, playingMacro);
         }
     }
 
@@ -1159,6 +1214,36 @@ public sealed class MainForm : Form
                 _status.Text = "LCD status disabled until next Start: " + ex.Message;
         }
         finally { _lcdBusy = false; }
+    }
+
+    private void ApplyLayerLeds(int layer)
+    {
+        if (_rgbOutputDevice is not G13DeviceInfo device)
+        {
+            if (!_layerLedWarningShown)
+                _status.Text = "M-key LED HID interface not found. Input layers still work.";
+            _layerLedWarningShown = true;
+            return;
+        }
+        try
+        {
+            // Preserve the MR indicator state if the firmware exposes it;
+            // otherwise default to off. We own M1-M3 only in layer mode.
+            bool mr = false;
+            try
+            {
+                mr = (G13OutputDevice.ReadMacroLedMask(device) & 8) != 0;
+            }
+            catch { /* readback is optional for writing M LEDs */ }
+            G13OutputDevice.SetMacroLeds(device,
+                layer == 1, layer == 2, layer == 3, mr);
+        }
+        catch (Exception ex)
+        {
+            if (!_layerLedWarningShown)
+                _status.Text = "M-layer LED update failed: " + ex.Message;
+            _layerLedWarningShown = true;
+        }
     }
 
     private void ApplyProfileRgb(MappingProfile profile)
@@ -1204,8 +1289,14 @@ public sealed class MainForm : Form
 
             _releaseGate.BlockCurrentlyHeld(_lastReport);
             _activeProfile = selected.Clone(selected.Name);
-            _engine = new ButtonTransitionEngine(_activeProfile);
-            _macroDetector = new MacroTriggerDetector(_activeProfile);
+            _activeLayer = 1;
+            _layerSelector.Seed(_lastReport);
+            _effectiveProfile = _activeProfile.UseMappingLayers
+                ? _activeProfile.ForLayer(1) : _activeProfile;
+            _engine = new ButtonTransitionEngine(_effectiveProfile);
+            _macroDetector = new MacroTriggerDetector(_effectiveProfile);
+            Interlocked.Exchange(ref _pendingLayerLedUpdate,
+                _activeProfile.UseMappingLayers ? 1 : 0);
         }
 
         _status.Text = $"Switched to '{selected.Name}' for " +

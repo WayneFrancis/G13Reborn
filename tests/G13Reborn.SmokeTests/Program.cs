@@ -1155,3 +1155,78 @@ await MacroPlayback.ExecuteAsync(delayOnly, delayEvents.Add, _ => { });
 Check(delayEvents.Count == 0 && delayStep.Parameter == "",
     "Delay-only macro needs no key or mouse parameter and emits no input");
 Console.WriteLine("Macro repeat, trigger transitions and Delay regressions passed.");
+
+
+// Each macro step parameter is edited according to its action. Tests
+// exercise the pure policy without starting WinForms or injecting input.
+Check(MacroStepParameterChoices.MouseButtons.SequenceEqual(
+    new[] { "Left", "Right", "Middle" }),
+    "mouse dropdown contains only the supported Left/Right/Middle buttons");
+foreach (var mouseKind in new[]
+{
+    MacroStepKind.MouseDown, MacroStepKind.MouseUp,
+    MacroStepKind.MouseClick, MacroStepKind.MouseDoubleClick
+})
+{
+    Check(MacroStepParameterChoices.TypeFor(mouseKind) ==
+          MacroStepParameterType.MouseButton,
+        $"{mouseKind} selects a mouse button dropdown");
+    Check(MacroStepParameterChoices.ParameterFor(mouseKind, "rIgHt") == "Right",
+        $"{mouseKind} loads existing mouse button names case-insensitively");
+    Check(MacroStepParameterChoices.ParameterFor(mouseKind, "Ctrl",
+        MacroStepKind.KeyDown) == "",
+        $"{mouseKind} clears incompatible keyboard parameter on action change");
+}
+foreach (var keyKind in new[]
+{
+    MacroStepKind.KeyDown, MacroStepKind.KeyUp, MacroStepKind.KeyPress
+})
+{
+    Check(MacroStepParameterChoices.TypeFor(keyKind) ==
+          MacroStepParameterType.Keyboard,
+        $"{keyKind} retains an editable text key parameter");
+}
+foreach (var noParameterKind in new[]
+{
+    MacroStepKind.Delay, MacroStepKind.WheelUp, MacroStepKind.WheelDown
+})
+{
+    Check(MacroStepParameterChoices.TypeFor(noParameterKind) ==
+          MacroStepParameterType.None &&
+          MacroStepParameterChoices.ParameterFor(noParameterKind, "Left") == "",
+        $"{noParameterKind} has a blank read-only parameter");
+}
+Check(MacroStepParameterChoices.ParameterFor(
+    MacroStepKind.MouseUp, "Middle", MacroStepKind.MouseDown) == "Middle",
+    "switching between mouse actions retains the selected mouse button");
+Check(MacroStepParameterChoices.ParameterFor(
+    MacroStepKind.MouseClick, "invalid") == "" &&
+      MacroStepParameterChoices.ParameterFor(
+    MacroStepKind.MouseClick, "", MacroStepKind.Delay) == "",
+    "mouse dropdown never invents an invalid or default mouse button");
+Check(MacroStepParameterChoices.ParameterFor(
+    MacroStepKind.KeyUp, "Ctrl", MacroStepKind.KeyDown) == "Ctrl",
+    "switching keyboard actions retains the existing key");
+Check(MacroStepParameterChoices.ParameterFor(
+    MacroStepKind.KeyDown, "Left", MacroStepKind.MouseClick) == "",
+    "switching mouse to keyboard clears the mouse button instead of interpreting Left as an arrow key");
+foreach (string button in MacroStepParameterChoices.MouseButtons)
+{
+    var validatedMouseStep = new MacroStep
+    {
+        Kind = MacroStepKind.MouseDoubleClick, Parameter = button
+    };
+    validatedMouseStep.Validate();
+}
+bool missingMouseButtonRejected = false;
+try
+{
+    new MacroStep
+    {
+        Kind = MacroStepKind.MouseClick, Parameter = ""
+    }.Validate();
+}
+catch (ArgumentException) { missingMouseButtonRejected = true; }
+Check(missingMouseButtonRejected,
+    "macro validation requires selecting a mouse button before saving");
+Console.WriteLine("Macro mouse parameter dropdown policy tests passed.");

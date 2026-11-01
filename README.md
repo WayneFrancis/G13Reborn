@@ -433,3 +433,25 @@ into Delay clears its old parameter. Changing it back permits parameter
 editing. Copy/paste, step reorder and recording insertion retain this rule.
 These editor changes do not affect the standalone hardware macro
 profile protocol; they are supported by software forwarding.
+
+
+### Macro step parameter editor
+
+In **Macro Editor**, the **Key / mouse button** column adapts to
+the selected Action:
+
+- **MouseDown / MouseUp / MouseClick / MouseDoubleClick:** a dropdown
+  with **Left**, **Right**, and **Middle**. You cannot enter arbitrary
+  mouse-button text. Switching between mouse actions preserves the
+  selected button.
+- **KeyDown / KeyUp / KeyPress:** the existing editable key-name field.
+  Switching from mouse to keyboard clears the mouse-button value so a
+  button such as **Left** cannot accidentally become the keyboard's
+  left-arrow key.
+- **Delay / WheelUp / WheelDown:** blank and read-only, since these actions
+  do not require a key or mouse-button argument.
+
+When changing a keyboard step to a mouse step, select the intended
+mouse button from the dropdown. The field starts blank deliberately;
+saving an incomplete mouse step is rejected. Existing mouse actions
+show their saved button, including from recorded and pasted sequences.

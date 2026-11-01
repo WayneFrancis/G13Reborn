@@ -167,7 +167,7 @@ public sealed class MainForm : Form
         _grid.Columns.Add(actions);
         _grid.Columns.Add(new DataGridViewTextBoxColumn
         {
-            Name = "Parameter", HeaderText = "Key chord or vJoy button #",
+            Name = "Parameter", HeaderText = "Key chord / vJoy # / Macro",
             FillWeight = 72
         });
         _grid.CurrentCellDirtyStateChanged += (_, _) =>
@@ -175,7 +175,17 @@ public sealed class MainForm : Form
             if (_grid.IsCurrentCellDirty)
                 _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
         };
-        _grid.CellValueChanged += (_, _) => MarkDirty();
+        _grid.CellValueChanged += (_, e) => MappingCellChanged(e);
+        _grid.EditingControlShowing += (_, e) =>
+        {
+            if (_grid.CurrentCell?.OwningColumn.Name == "Parameter" &&
+                e.Control is DataGridViewComboBoxEditingControl macroEditor)
+            {
+                // A Macro parameter is a chosen profile-owned macro, not
+                // arbitrary text. A missing macro must be added in Edit macros.
+                macroEditor.DropDownStyle = ComboBoxStyle.DropDownList;
+            }
+        };
         _grid.DataError += (_, e) =>
         {
             e.ThrowException = false;
@@ -269,13 +279,87 @@ public sealed class MainForm : Form
                     new ButtonAction { Kind = MappingKind.None };
                 int index = _grid.Rows.Add(
                     button.Name, button.Bit, mapping.Kind.ToString(), mapping.Parameter);
-                _grid.Rows[index].Tag = button.Bit;
+                DataGridViewRow row = _grid.Rows[index];
+                row.Tag = button.Bit;
+                row.Cells["Kind"].Tag = mapping.Kind;
+                SetParameterCell(row, mapping.Kind, mapping.Parameter);
             }
             _dirty = false;
             _status.Text = $"Profile '{profile.Name}' loaded. Input output is stopped.";
             UpdateControlState();
         }
         finally { _loading = false; }
+    }
+
+    /// <summary>
+    /// Per-row parameter editor: macro actions use a dropdown of names in
+    /// this profile; every other action retains its ordinary text entry.
+    /// Rows must have their Kind and Tag initialized before calling this.
+    /// </summary>
+    private void SetParameterCell(
+        DataGridViewRow row, MappingKind kind, string? parameter)
+    {
+        int index = _grid.Columns["Parameter"].Index;
+        if (kind == MappingKind.Macro)
+        {
+            string[] names = MappingParameterChoices.MacroNames(
+                _pendingMacros ?? Current().Macros);
+            var cell = new DataGridViewComboBoxCell
+            {
+                FlatStyle = FlatStyle.Flat,
+                DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
+                DisplayStyleForCurrentCellOnly = false,
+                ToolTipText = names.Length == 0
+                    ? "Create a macro using Edit macros before assigning it."
+                    : "Select a macro defined in this profile."
+            };
+            // Blank is deliberately allowed while configuring a mapping;
+            // profile validation requires a real macro before saving.
+            cell.Items.Add("");
+            foreach (string name in names)
+                cell.Items.Add(name);
+            row.Cells[index] = cell;
+            cell.Value = MappingParameterChoices.ExistingMacroChoice(
+                parameter, names);
+        }
+        else
+        {
+            var cell = new DataGridViewTextBoxCell
+            {
+                Value = parameter ?? ""
+            };
+            row.Cells[index] = cell;
+        }
+    }
+
+    private void MappingCellChanged(DataGridViewCellEventArgs e)
+    {
+        if (_loading || e.RowIndex < 0) return;
+        if (e.ColumnIndex == _grid.Columns["Kind"].Index)
+        {
+            DataGridViewRow row = _grid.Rows[e.RowIndex];
+            if (Enum.TryParse<MappingKind>(
+                row.Cells["Kind"].Value?.ToString(), out var newKind))
+            {
+                MappingKind oldKind = row.Cells["Kind"].Tag is MappingKind old
+                    ? old : MappingKind.None;
+                string existing = row.Cells["Parameter"].Value?.ToString() ?? "";
+                string next = MappingParameterChoices.ParameterAfterKindChange(
+                    oldKind, newKind, existing);
+                _loading = true;
+                try
+                {
+                    SetParameterCell(row, newKind, next);
+                    row.Cells["Kind"].Tag = newKind;
+                }
+                finally { _loading = false; }
+                if (newKind == MappingKind.Macro &&
+                    MappingParameterChoices.MacroNames(
+                        _pendingMacros ?? Current().Macros).Length == 0)
+                    _status.Text = "No macros defined. Use Edit macros to create one.";
+            }
+        }
+        MarkDirty();
     }
 
     private void MarkDirty()
@@ -323,6 +407,7 @@ public sealed class MainForm : Form
 
         // Only change the staged profile and grid AFTER all confirmations.
         // Current().Macros stays untouched until a successful Save profile.
+        _pendingMacros = updatedMacros;
         _loading = true;
         try
         {
@@ -331,12 +416,14 @@ public sealed class MainForm : Form
                 int bit = (int)row.Tag!;
                 ButtonAction action = mapped.Buttons[bit];
                 row.Cells["Kind"].Value = action.Kind.ToString();
-                row.Cells["Parameter"].Value = action.Parameter;
+                row.Cells["Kind"].Tag = action.Kind;
+                // Names may have been renamed, added or deleted. Rebuild the
+                // row-level combo box using the edited profile's macro list.
+                SetParameterCell(row, action.Kind, action.Parameter);
             }
         }
         finally { _loading = false; }
 
-        _pendingMacros = updatedMacros;
         MarkDirty();
         _status.Text = "Macro changes staged. Save profile to persist them. " +
             $"Updated {mapped.RenamedBits.Count} assignment(s); " +

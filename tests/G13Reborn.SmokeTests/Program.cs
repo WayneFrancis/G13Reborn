@@ -1160,8 +1160,8 @@ Console.WriteLine("Macro repeat, trigger transitions and Delay regressions passe
 // Each macro step parameter is edited according to its action. Tests
 // exercise the pure policy without starting WinForms or injecting input.
 Check(MacroStepParameterChoices.MouseButtons.SequenceEqual(
-    new[] { "Left", "Right", "Middle" }),
-    "mouse dropdown contains only the supported Left/Right/Middle buttons");
+    new[] { "Left", "Right", "Middle", "XButton1", "XButton2" }),
+    "mouse dropdown contains Left/Right/Middle plus XButton1/XButton2");
 foreach (var mouseKind in new[]
 {
     MacroStepKind.MouseDown, MacroStepKind.MouseUp,

@@ -1047,20 +1047,26 @@ public sealed class MainForm : Form
 
     private async Task UpdateLcdStatusAsync(string profile, string? macro)
     {
-        if (_lcdOutputDevice is not G13DeviceInfo device || _lcdBusy)
+        if (_lcdOutputDevice is not G13DeviceInfo device || _lcdBusy || !_running)
             return;
+        CancellationToken token = _cancellation?.Token ?? CancellationToken.None;
         _lcdBusy = true;
         try
         {
             byte[] frame = G13LcdStatusRenderer.Render(
                 profile, macro, DateTime.Now);
-            await G13OutputDevice.SendLcdFrameAsync(device, frame);
+            token.ThrowIfCancellationRequested();
+            await G13OutputDevice.SendLcdFrameAsync(device, frame, token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // Stop / release cancelled an in-flight write.
         }
         catch (Exception ex)
         {
             // LCD is optional; keep keyboard and mouse forwarding alive.
             _lcdFailed = true;
-            if (!IsDisposed)
+            if (!IsDisposed && _running)
                 _status.Text = "LCD status disabled until next Start: " + ex.Message;
         }
         finally { _lcdBusy = false; }

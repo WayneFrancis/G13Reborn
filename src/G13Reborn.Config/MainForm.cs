@@ -27,6 +27,10 @@ public sealed class MainForm : Form
     };
     private readonly ComboBox _devices = new() { Width = 330, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Button _refresh = new() { Text = "Refresh", AutoSize = true };
+    private readonly Button _hardware = new()
+    {
+        Text = "LCD / backlight...", AutoSize = true
+    };
     private readonly Button _start = new() { Text = "Start forwarding", AutoSize = true };
     private readonly Button _stop = new() { Text = "Stop / release", AutoSize = true };
     private readonly CheckBox _keyboardMouse = new()
@@ -129,7 +133,7 @@ public sealed class MainForm : Form
         var deviceBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         deviceBar.Controls.AddRange(new Control[]
         {
-            TextLabel("G13 HID"), _devices, _refresh, _start, _stop
+            TextLabel("G13 HID"), _devices, _refresh, _hardware, _start, _stop
         });
         root.Controls.Add(deviceBar, 0, 2);
 
@@ -208,6 +212,12 @@ public sealed class MainForm : Form
         _saveProfile.Click += (_, _) => SaveCurrentProfile();
         _editMacros.Click += (_, _) => EditMacrosClicked();
         _refresh.Click += (_, _) => RefreshDevices();
+        _hardware.Click += (_, _) =>
+        {
+            if (_running) return;
+            using var dialog = new G13HardwareDialog();
+            dialog.ShowDialog(this);
+        };
         _start.Click += (_, _) => StartForwarding();
         _stop.Click += async (_, _) => await StopForwardingAsync();
         _deadzone.ValueChanged += (_, _) => MarkDirty();
@@ -977,6 +987,7 @@ public sealed class MainForm : Form
         _deleteProfile.Enabled = !_running && _document.Profiles.Count > 1;
         _saveProfile.Enabled = !_running;
         _editMacros.Enabled = !_running;
+        _hardware.Enabled = !_running;
         _autoSwitch.Enabled = !_running;
         _associatedExecutables.Enabled = !_running;
         _devices.Enabled = !_running;

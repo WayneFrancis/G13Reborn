@@ -52,6 +52,9 @@ public sealed class MainForm : Form
     private string _currentName = "Default";
     private bool _loading;
     private bool _dirty;
+    // Editor changes are staged separately from the persisted profile.
+    // Discarding a dirty profile must not silently save unsaved macros.
+    private List<MacroDefinition>? _pendingMacros;
     private bool _running;
     private bool _nativeOutputEnabled;
     private MappingProfile? _activeProfile;
@@ -251,6 +254,7 @@ public sealed class MainForm : Form
         try
         {
             _currentName = name;
+            _pendingMacros = null;
             var profile = Current();
             _profiles.SelectedItem = profile.Name;
             _deadzone.Value = profile.DeadzonePercent;
@@ -284,14 +288,59 @@ public sealed class MainForm : Form
     private void EditMacrosClicked()
     {
         if (_running) return;
-        using var editor = new MacroEditorDialog(Current().Macros);
+        var previousMacros = _pendingMacros ?? Current().Macros;
+        using var editor = new MacroEditorDialog(previousMacros);
         if (editor.ShowDialog(this) != DialogResult.OK || editor.Result is null)
             return;
 
-        Current().Macros = editor.Result.Select(m => m.Clone()).ToList();
+        _grid.EndEdit();
+        var gridBindings = new Dictionary<int, ButtonAction>();
+        foreach (DataGridViewRow row in _grid.Rows)
+        {
+            int bit = (int)row.Tag!;
+            gridBindings.Add(bit, new ButtonAction
+            {
+                Kind = Enum.Parse<MappingKind>(
+                    row.Cells["Kind"].Value?.ToString() ?? "None"),
+                Parameter = row.Cells["Parameter"].Value?.ToString()?.Trim() ?? ""
+            });
+        }
+
+        var updatedMacros = editor.Result.Select(m => m.Clone()).ToList();
+        var renames = editor.Renames ??
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        BindingReconciliation mapped = MacroCatalogEdits.ReconcileBindings(
+            gridBindings, previousMacros.Select(m => m.Name).ToArray(),
+            updatedMacros, renames);
+
+        if (mapped.ClearedBits.Count > 0 &&
+            MessageBox.Show(this,
+                $"Deleting macros will remove assignments from " +
+                $"{mapped.ClearedBits.Count} G-key(s). Continue?",
+                "Remove assigned macros", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+
+        // Only change the staged profile and grid AFTER all confirmations.
+        // Current().Macros stays untouched until a successful Save profile.
+        _loading = true;
+        try
+        {
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                int bit = (int)row.Tag!;
+                ButtonAction action = mapped.Buttons[bit];
+                row.Cells["Kind"].Value = action.Kind.ToString();
+                row.Cells["Parameter"].Value = action.Parameter;
+            }
+        }
+        finally { _loading = false; }
+
+        _pendingMacros = updatedMacros;
         MarkDirty();
-        _status.Text = "Macros edited. Click Save profile to persist changes. " +
-            "Assign a G-key action of Macro and enter its macro name.";
+        _status.Text = "Macro changes staged. Save profile to persist them. " +
+            $"Updated {mapped.RenamedBits.Count} assignment(s); " +
+            $"cleared {mapped.ClearedBits.Count} deleted-macro assignment(s).";
     }
 
     private bool SaveCurrentProfile()
@@ -301,6 +350,8 @@ public sealed class MainForm : Form
         {
             _grid.EndEdit();
             var replacement = Current().Clone(_currentName);
+            if (_pendingMacros is not null)
+                replacement.Macros = _pendingMacros.Select(m => m.Clone()).ToList();
             replacement.DeadzonePercent = (int)_deadzone.Value;
             replacement.InvertY = _invertY.Checked;
             replacement.ExecutableNames = _associatedExecutables.Text
@@ -336,6 +387,7 @@ public sealed class MainForm : Form
                 _document.AutoSwitchEnabled = previousAutoSwitch;
                 throw;
             }
+            _pendingMacros = null;
             _dirty = false;
             _status.Text = $"Saved '{_currentName}' to {ProfileStore.FilePath}";
             return true;

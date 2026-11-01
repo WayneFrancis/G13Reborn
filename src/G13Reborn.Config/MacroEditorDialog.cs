@@ -779,7 +779,7 @@ internal sealed class MacroEditorDialog : Form
 /// </summary>
 internal sealed class MacroStepsGrid : DataGridView
 {
-    public Func<Keys, bool>? CommandHandler { get; set; }
+    internal Func<Keys, bool>? CommandHandler;
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {

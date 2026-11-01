@@ -15,7 +15,7 @@ public static class G13DeviceDiscovery
                 StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Not a Logitech G13 collection.", nameof(device));
         using var handle = NativeHid.OpenMetadata(device.Path);
-        return handle.IsInvalid ? (0, 0) : NativeHid.Usage(handle);
+        return handle.IsInvalid ? ((ushort)0, (ushort)0) : NativeHid.Usage(handle);
     }
 
     public static IReadOnlyList<G13DeviceInfo> Enumerate()

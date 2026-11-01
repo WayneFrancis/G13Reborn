@@ -519,3 +519,43 @@ Profiles with this feature off retain their existing M-key behaviour
 and mapping data. The LCD active-profile line displays M1/M2/M3
 while the feature is enabled. This is host-side layer selection and
 does not write layer mappings to the G13's onboard memory.
+
+
+## Onboard-profile investigation — read-only first
+
+The original G13 was advertised by Logitech as having space for up to
+five onboard profiles, but **we do not yet know a verified USB read
+protocol for those stored configurations**. The familiar G13 feature
+reports `0x05` and `0x07` expose live M-key LED and RGB states, not
+the contents of those profiles. Logitech's generic HID++ protocols for
+modern mice must **not** be assumed to work on the old G13.
+
+In **LCD / backlight...** there are now two separate, explicit actions:
+
+- **Save read-only HID snapshot...** produces a JSON file containing
+  the G13's HID collection paths, VID/PID/version, input/output/feature
+  report lengths, usage and usage-page values, and the results of
+  **GET-only** requests for feature IDs `0x05` and `0x07`.
+  Unsupported reads are recorded as errors. **No HID feature SET,
+  output report or unknown report-ID probe is sent.** This snapshot
+  is **not** an onboard profile dump, and cannot reveal key assignments.
+- **Backup local profiles (ZIP)...** archives the host's
+  `%LOCALAPPDATA%\G13Reborn\profiles.json` (and `.bak`)
+  and locally stored LGS profiles in
+  `%LOCALAPPDATA%\Logitech\Logitech Gaming Software\Profiles`.
+  The ZIP includes a scope manifest that explicitly says it is a
+  **PC file backup**, not onboard storage. Files are copied without
+  altering the originals. Unavailable locations are simply omitted,
+  and file-size/count limits prevent accidentally archiving enormous
+  directories. Only locations you choose through the Save dialog are
+  written.
+
+These operations are meant to establish a safe baseline before any
+attempt to reverse-engineer persistent onboard profiles. If you
+share a snapshot or local backup, review it first: HID paths may
+identify a computer and profile files can contain personal game
+paths and macro text. **No on-device memory writes are implemented.**
+
+Primary sources: Logitech's 2008 G13 announcement documents the
+onboard-profile claim; Linux `hid-lg-g15` documents G13's known
+runtime LED report IDs but not persistent profile access.

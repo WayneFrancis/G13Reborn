@@ -1429,3 +1429,74 @@ try { invalidLayer.Validate(); }
 catch (ArgumentException) { invalidM2Rejected = true; }
 Check(invalidM2Rejected, "M2 mappings are validated, not only M1 assignments");
 Console.WriteLine("M1/M2/M3 layer selector, edge, forwarding and persistence tests passed.");
+
+
+// Read-only device research: no unidentified firmware report IDs and
+// backup contains PC files only, with an explicit scope manifest.
+var fakeDevice = new G13DeviceInfo(
+    @"\\?\hid#vid_046d&pid_c21c#test", 0x046D, 0xC21C, 1, 8, 992, 5);
+bool blockedUnknownFeature = false;
+try { G13OutputDevice.ReadKnownFeature(fakeDevice, 0x41); }
+catch (ArgumentOutOfRangeException) { blockedUnknownFeature = true; }
+Check(blockedUnknownFeature,
+    "read-only diagnostics forbid probing unverified HID feature IDs");
+
+var testDeviceSnapshot = new G13ReadOnlySnapshot(1,
+    DateTimeOffset.UtcNow, G13ReadOnlySnapshot.SnapshotScope,
+    new[]
+    {
+        new G13InterfaceSnapshot(fakeDevice.Path, fakeDevice.VendorId,
+            fakeDevice.ProductId, fakeDevice.Version, 8, 992, 5, 0xFF00, 1,
+            new[]
+            {
+                new G13KnownFeatureSnapshot("Live RGB backlight", 7,
+                    true, "075AFF6E00", null)
+            })
+    });
+var snapshotJson = testDeviceSnapshot.ToJson();
+Check(snapshotJson.Contains("READ-ONLY HID") &&
+      snapshotJson.Contains("NOT contain stored onboard") &&
+      snapshotJson.Contains("075AFF6E00") &&
+      !snapshotJson.Contains("firmware memory backup"),
+    "device snapshot explains scope and records known feature bytes");
+
+string tempProfiles = Path.Combine(Path.GetTempPath(),
+    "G13Reborn-smoke-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(tempProfiles);
+    string profileFile = Path.Combine(tempProfiles, "profiles.json");
+    string lgsDirectory = Path.Combine(tempProfiles, "LGS");
+    Directory.CreateDirectory(Path.Combine(lgsDirectory, "Shooter"));
+    File.WriteAllText(profileFile, "{\"G13Local\":true}");
+    File.WriteAllText(profileFile + ".bak", "previous");
+    File.WriteAllText(Path.Combine(lgsDirectory, "Shooter", "game.xml"),
+        "<Profile Name=\"Shooter\" />");
+    string zipPath = Path.Combine(tempProfiles, "local-backup.zip");
+    var copied = G13LocalProfileBackup.Create(
+        zipPath, profileFile, lgsDirectory);
+    Check(copied.FileCount == 3 && File.Exists(zipPath),
+        "backup includes G13Reborn live + previous and local LGS profiles");
+
+    using (var zip = System.IO.Compression.ZipFile.OpenRead(zipPath))
+    {
+        var entries = zip.Entries.Select(x => x.FullName).ToArray();
+        Check(entries.Contains("G13Reborn/profiles.json") &&
+              entries.Contains("G13Reborn/profiles.json.bak") &&
+              entries.Contains("Logitech Gaming Software/Profiles/Shooter/game.xml") &&
+              entries.Contains("backup-manifest.json"),
+            "backup includes exactly labelled host-side profile paths and manifest");
+        using var manifestReader = new StreamReader(
+            zip.GetEntry("backup-manifest.json")!.Open());
+        string manifestText = manifestReader.ReadToEnd();
+        Check(manifestText.Contains("HOST FILE BACKUP ONLY") &&
+              manifestText.Contains("Does NOT contain G13 firmware"),
+            "archive manifest expressly disclaims onboard profile data");
+    }
+}
+finally
+{
+    if (Directory.Exists(tempProfiles))
+        Directory.Delete(tempProfiles, recursive: true);
+}
+Console.WriteLine("Read-only diagnostic and local profile ZIP backup tests passed.");

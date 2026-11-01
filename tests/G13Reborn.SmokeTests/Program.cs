@@ -838,3 +838,99 @@ var preservedJoin = SequenceEditOperations.InsertRecording(
 Check(preservedJoin[2].DelayAfterMs == 80,
     "user-specified nonzero join delay is preserved");
 Console.WriteLine("Macro multi-selection, clipboard and recording-join tests passed.");
+
+
+// Macro management: deep duplication, stable identities through rename,
+// assignment repair and safe staging before Save profile.
+var managedOriginal = new MacroDefinition
+{
+    Name = "AdvMacro", Mode = MacroMode.Steps, Steps = new()
+    {
+        new() { Kind = MacroStepKind.KeyDown, Parameter = "Ctrl", DelayAfterMs = 25 },
+        new() { Kind = MacroStepKind.KeyUp, Parameter = "Ctrl", DelayAfterMs = 25 }
+    }
+};
+var managedSecond = new MacroDefinition
+{
+    Name = "MouseMacro", Mode = MacroMode.Text, Text = "Click me!"
+};
+var managedCollection = new List<MacroDefinition> { managedOriginal, managedSecond };
+var firstDuplicate = MacroCatalogEdits.Duplicate(managedOriginal, managedCollection);
+Check(firstDuplicate.Name == "AdvMacro copy" &&
+      firstDuplicate.Steps.Count == 2 &&
+      !ReferenceEquals(firstDuplicate.Steps[0], managedOriginal.Steps[0]),
+    "Duplicate creates uniquely named deep copy of existing sequence");
+firstDuplicate.Steps[0].DelayAfterMs = 70;
+Check(managedOriginal.Steps[0].DelayAfterMs == 25,
+    "Editing duplicated steps does not mutate the source macro");
+var secondDuplicate = MacroCatalogEdits.Duplicate(managedOriginal,
+    managedCollection.Append(firstDuplicate));
+Check(secondDuplicate.Name == "AdvMacro copy 2",
+    "Repeated duplicates receive collision-free numbered names");
+var caseDuplicate = MacroCatalogEdits.Duplicate(managedOriginal,
+    managedCollection.Append(firstDuplicate.Clone() is MacroDefinition c
+        ? new MacroDefinition { Name = "ADVMACRO COPY 2", Mode = MacroMode.Text, Text = "X" }
+        : managedSecond));
+Check(caseDuplicate.Name == "AdvMacro copy 3" || caseDuplicate.Name == "AdvMacro copy 2",
+    "Duplicate naming uses case-insensitive collision checks");
+
+var editedOriginals = new List<MacroDefinition>
+{
+    managedOriginal.Clone(), managedSecond.Clone(), firstDuplicate.Clone()
+};
+editedOriginals[0].Name = "AdvMacro v2";
+editedOriginals[1].Name = "Mouse v2";
+var identityRenames = MacroCatalogEdits.BuildRenames(
+    new string?[] { "AdvMacro", "MouseMacro", null }, editedOriginals);
+Check(identityRenames.Count == 2 &&
+      identityRenames["AdvMacro"] == "AdvMacro v2" &&
+      identityRenames["MouseMacro"] == "Mouse v2",
+    "Existing macro renames preserve original identities; duplicates do not rename bindings");
+
+var originalBindings = new Dictionary<int, ButtonAction>
+{
+    [0] = new() { Kind = MappingKind.Macro, Parameter = "AdvMacro" },
+    [1] = new() { Kind = MappingKind.Macro, Parameter = "MouseMacro" },
+    [2] = new() { Kind = MappingKind.Keyboard, Parameter = "C" },
+    [3] = new() { Kind = MappingKind.Macro, Parameter = "OtherMacro" }
+};
+var reconciledRenames = MacroCatalogEdits.ReconcileBindings(
+    originalBindings, new[] { "AdvMacro", "MouseMacro" },
+    editedOriginals, identityRenames);
+Check(reconciledRenames.Buttons[0].Parameter == "AdvMacro v2" &&
+      reconciledRenames.Buttons[1].Parameter == "Mouse v2" &&
+      reconciledRenames.RenamedBits.SequenceEqual(new[] { 0, 1 }),
+    "Renaming a macro repairs all matching G-key assignments");
+Check(reconciledRenames.Buttons[2].Kind == MappingKind.Keyboard &&
+      reconciledRenames.Buttons[3].Parameter == "OtherMacro" &&
+      originalBindings[0].Parameter == "AdvMacro",
+    "Assignment repairs leave other kinds and original profile untouched");
+
+var deletedManaged = new List<MacroDefinition> { editedOriginals[0] };
+var reconciledDeletes = MacroCatalogEdits.ReconcileBindings(
+    originalBindings, new[] { "AdvMacro", "MouseMacro" },
+    deletedManaged,
+    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    { ["AdvMacro"] = "AdvMacro v2" });
+Check(reconciledDeletes.Buttons[0].Parameter == "AdvMacro v2" &&
+      reconciledDeletes.Buttons[1].Kind == MappingKind.None &&
+      reconciledDeletes.Buttons[1].Parameter == "" &&
+      reconciledDeletes.ClearedBits.SequenceEqual(new[] { 1 }),
+    "Deleting an assigned macro clears the orphaned mapping safely");
+Check(originalBindings[1].Kind == MappingKind.Macro,
+    "Staged deletion never mutates persisted binding objects");
+
+var persistedManagedProfile = MappingProfile.CreateDefault("Macro save boundary");
+persistedManagedProfile.Macros = managedCollection.Select(m => m.Clone()).ToList();
+persistedManagedProfile.Buttons[0] = new ButtonAction
+    { Kind = MappingKind.Macro, Parameter = "AdvMacro" };
+persistedManagedProfile.Validate();
+var stagingProfile = persistedManagedProfile.Clone(persistedManagedProfile.Name);
+stagingProfile.Macros = editedOriginals.Select(m => m.Clone()).ToList();
+stagingProfile.Buttons[0].Parameter = "AdvMacro v2";
+stagingProfile.Validate();
+Check(persistedManagedProfile.Macros[0].Name == "AdvMacro" &&
+      persistedManagedProfile.Buttons[0].Parameter == "AdvMacro" &&
+      stagingProfile.Macros[0].Name == "AdvMacro v2",
+    "Editing a cloned pending profile cannot change unsaved persisted macro bindings");
+Console.WriteLine("Macro duplication, rename, assignment and staged-save tests passed.");

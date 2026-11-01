@@ -301,3 +301,29 @@ default join delay (25 ms), rather than immediately playing the next
 step. The join is added only if the last recorded step's delay is zero;
 a nonzero recorded delay is preserved. Recordings appended at the end
 keep their trailing zero delay.
+
+
+## Macro management and unsaved changes
+
+The Macro Editor now offers **Duplicate** alongside **New** and **Delete**.
+Duplication makes a deep copy, including all timing and step actions,
+with a unique name such as \`AdvMacro copy\` or \`AdvMacro copy 2\`.
+The original macro is unchanged.
+
+Renaming existing macros in the editor now automatically updates matching
+G-key **Macro** assignments in the main profile mapping grid when you
+accept the edits. Renames are tracked against their original identities
+throughout the editor session, including after repeated edits and
+duplication. Deleting a macro with assigned G-keys prompts before clearing
+those now-invalid assignments. Changing an assigned macro's name no
+longer causes a missing-macro validation failure when saving the profile.
+
+**Save macros** accepts edits back to the profile window but does not
+write the profile file. **Save profile** is the actual persistence boundary.
+Macro changes are staged separately from the saved profile data until
+then; choosing **No** at the unsaved-profile prompt safely discards those
+staged changes rather than accidentally writing them to disk.
+
+**Cancel** or closing the Macro Editor now warns before discarding
+unsaved macro edits, including changes not yet committed from individual
+fields or step cells. You can keep editing instead of losing changes.

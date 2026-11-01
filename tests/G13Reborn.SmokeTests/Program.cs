@@ -1230,3 +1230,106 @@ catch (ArgumentException) { missingMouseButtonRejected = true; }
 Check(missingMouseButtonRejected,
     "macro validation requires selecting a mouse button before saving");
 Console.WriteLine("Macro mouse parameter dropdown policy tests passed.");
+
+
+// XBUTTON1 / XBUTTON2 are physical mouse back/forward buttons.
+// Their codes, recorder messages and outbound MOUSEINPUT mouseData must
+// remain distinct, including when a recording is stopped while held.
+Check(MouseControl.XButton1 != MouseControl.XButton2 &&
+      MacroStep.ParseMouse("XButton1") == (int)MouseControl.XButton1 &&
+      MacroStep.ParseMouse("XButton2") == (int)MouseControl.XButton2,
+    "XBUTTON1 and XBUTTON2 are distinct macro mouse parameters");
+Check(MacroStep.ParseMouse("x1") == (int)MouseControl.XButton1 &&
+      MacroStep.ParseMouse("x2") == (int)MouseControl.XButton2,
+    "X1 and X2 input aliases map to the proper extended mouse buttons");
+Check(MacroStepParameterChoices.MouseButtons.SequenceEqual(
+    new[] { "Left", "Right", "Middle", "XButton1", "XButton2" }),
+    "macro mouse dropdown contains both X buttons after the original three");
+Check(MacroStepParameterChoices.ParameterFor(
+    MacroStepKind.MouseClick, "xbutton2", MacroStepKind.MouseDown) == "XButton2",
+    "XBUTTON2 is canonicalized and preserved between mouse actions");
+Check(MouseExtraButtons.DecodeHookButton(1u << 16) == "XButton1" &&
+      MouseExtraButtons.DecodeHookButton(2u << 16) == "XButton2" &&
+      MouseExtraButtons.DecodeHookButton(3u << 16) is null,
+    "mouse hook high-word discriminates XBUTTON1 and XBUTTON2");
+Check(MouseExtraButtons.MouseData(MouseControl.XButton1) == 1 &&
+      MouseExtraButtons.MouseData(MouseControl.XButton2) == 2,
+    "SendInput uses the documented XBUTTON1/2 mouseData identifiers");
+bool regularMouseRejected = false;
+try { MouseExtraButtons.MouseData(MouseControl.Left); }
+catch (ArgumentOutOfRangeException) { regularMouseRejected = true; }
+Check(regularMouseRejected, "extended mouseData helper rejects ordinary buttons");
+
+var xRecorded = new MacroRecordingSession();
+Check(xRecorded.RecordMouseButton("XButton1", true, 20) &&
+      xRecorded.RecordMouseButton("XButton2", true, 30) &&
+      xRecorded.RecordMouseButton("XButton1", false, 60) &&
+      !xRecorded.RecordMouseButton("XButton1", false, 70),
+    "macro recorder captures distinct X-button edges without duplicates");
+var xFinished = xRecorded.Finish(200);
+Check(xFinished.Count == 4 &&
+      xFinished[0].Parameter == "XButton1" &&
+      xFinished[1].Parameter == "XButton2" &&
+      xFinished[2].Kind == MacroStepKind.MouseUp &&
+      xFinished[3].Parameter == "XButton2" &&
+      xFinished[3].Kind == MacroStepKind.MouseUp,
+    "stopping recording releases any held X button by its correct name");
+
+var xMacro = new MacroDefinition
+{
+    Name = "X buttons", Mode = MacroMode.Steps,
+    Steps = new()
+    {
+        new() { Kind = MacroStepKind.MouseDown, Parameter = "XButton1" },
+        new() { Kind = MacroStepKind.MouseUp, Parameter = "XButton1" },
+        new() { Kind = MacroStepKind.MouseClick, Parameter = "XButton2" }
+    }
+};
+var xEvents = new List<InputEvent>();
+await MacroPlayback.ExecuteAsync(xMacro, xEvents.Add, _ => { });
+Check(xEvents.Select(x => x.Kind).SequenceEqual(new[]
+{
+    InputEventKind.MouseDown, InputEventKind.MouseUp,
+    InputEventKind.MouseDown, InputEventKind.MouseUp
+}) && xEvents.Select(x => x.Code).SequenceEqual(new[]
+{
+    (int)MouseControl.XButton1, (int)MouseControl.XButton1,
+    (int)MouseControl.XButton2, (int)MouseControl.XButton2
+}), "macro playback preserves X-button press/release and click semantics");
+
+var xProfile = MappingProfile.CreateDefault("X buttons profile");
+xProfile.Buttons[0] = new ButtonAction { Kind = MappingKind.MouseXButton1 };
+xProfile.Buttons[1] = new ButtonAction { Kind = MappingKind.MouseXButton2 };
+var xEngine = new ButtonTransitionEngine(xProfile);
+Check(xEngine.Apply(two!).Count(x =>
+      x.Kind == InputEventKind.MouseDown &&
+      x.Code is (int)MouseControl.XButton1 or (int)MouseControl.XButton2) == 2,
+    "G-key mapping sends both extended mouse buttons independently");
+Check(xEngine.ReleaseAll().Count(x => x.Kind == InputEventKind.MouseUp) == 2,
+    "all held X buttons release on Stop/profile switch");
+
+var rgbProfile = MappingProfile.CreateDefault("RGB status profile");
+rgbProfile.UseProfileRgb = true;
+rgbProfile.ProfileRgb = 0x123ABC;
+rgbProfile.Validate();
+var rgbCloned = rgbProfile.Clone("RGB clone");
+Check(rgbCloned.UseProfileRgb && rgbCloned.ProfileRgb == 0x123ABC,
+    "profile cloning preserves RGB opt-in and 24-bit colour");
+var rgbDocument = new ProfilesDocument
+{
+    SelectedProfile = rgbProfile.Name,
+    LcdStatusEnabled = true,
+    Profiles = new() { rgbProfile }
+};
+string rgbJson = System.Text.Json.JsonSerializer.Serialize(rgbDocument);
+var rgbRestored = System.Text.Json.JsonSerializer.Deserialize<ProfilesDocument>(rgbJson);
+Check(rgbRestored is not null && rgbRestored.LcdStatusEnabled &&
+      rgbRestored.Profiles[0].UseProfileRgb &&
+      rgbRestored.Profiles[0].ProfileRgb == 0x123ABC,
+    "LCD opt-in and per-profile RGB survive profile serialization");
+bool badColourRejected = false;
+rgbProfile.ProfileRgb = 0x1000000;
+try { rgbProfile.Validate(); }
+catch (ArgumentException) { badColourRejected = true; }
+Check(badColourRejected, "profile rejects colours outside 24-bit RGB");
+Console.WriteLine("X-button input and opt-in RGB/LCD profile tests passed.");

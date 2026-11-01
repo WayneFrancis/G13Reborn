@@ -455,3 +455,38 @@ When changing a keyboard step to a mouse step, select the intended
 mouse button from the dropdown. The field starts blank deliberately;
 saving an incomplete mouse step is rejected. Existing mouse actions
 show their saved button, including from recorded and pasted sequences.
+
+
+## Extended mouse buttons and live hardware display
+
+**XButton1** and **XButton2** (the mouse back/forward thumb buttons)
+are now available in the macro editor's mouse button dropdown, recorder
+and playback engine. The Windows low-level mouse hook distinguishes the
+two buttons from `MSLLHOOKSTRUCT.mouseData`; playback generates
+`MOUSEEVENTF_XDOWN`/`MOUSEEVENTF_XUP` with the correct
+`MOUSEINPUT.mouseData`. A recording stopped with an X button held
+produces the corresponding MouseUp. The main G-key mapping's
+**Output action** selector also now offers `MouseXButton1` and
+`MouseXButton2`. These use normal Windows SendInput forwarding, subject
+to the same game/input restrictions as other mouse buttons.
+
+**Use profile RGB** (default off) saves a colour with each profile.
+Click **RGB colour...** to select its colour, then **Save profile**.
+If enabled, G13Reborn applies that profile's colour once when forwarding
+starts and when automatic executable switching activates that profile.
+A failed colour command is reported without stopping normal forwarding.
+Colour changes are sent to hardware only when this setting is enabled
+and forwarding is started/switched.
+
+**Show LCD status** (default off) is a global setting saved in the
+profiles file. When enabled, while forwarding is active, G13Reborn
+updates the 160x43 LCD approximately once per second to display
+its current local clock, active profile name, and executing macro name.
+The text is truncated to fit the display. If the LCD write fails,
+status output is suspended until the next forwarding start, while
+keyboard, mouse and vJoy forwarding continue unaffected.
+
+Both options use the previously tested G13 HID output reports and are
+opt-in to avoid interfering with Logitech Gaming Software or an LCD
+applet. Settings are host-side profile preferences; they are not writes
+to the G13's persistent onboard memory.

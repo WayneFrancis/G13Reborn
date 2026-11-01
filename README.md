@@ -210,3 +210,16 @@ controls.
 
 Use **Save macros** and then **Save profile** to persist both the
 recorded steps and standardized delays.
+
+
+### Recorder Stop button handling
+
+The recorder ignores mouse events whose screen position is over the
+recorder window, even while another application technically still has
+foreground focus. This prevents the click on **Stop and use recording** (or
+**Discard**) from becoming the final left-mouse down/up action.
+
+Time spent moving the mouse back to the recorder is not added to the end
+of the sequence. When an actual key/mouse button is still held at Stop,
+the recorder inserts a matching release with at most a 25 ms delay instead
+of waiting for the user-interface click time.

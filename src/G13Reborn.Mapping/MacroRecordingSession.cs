@@ -78,16 +78,23 @@ public sealed class MacroRecordingSession
 
     /// <summary>
     /// Finish with balanced key/button releases, even if recording stopped
-    /// while a physical key was being held.
+    /// while a physical key was being held. Do not encode the potentially
+    /// lengthy pause while moving to the recorder's Stop button as a delay
+    /// before synthetic releases. The final recorded action has no delay
+    /// when no synthetic release is needed.
     /// </summary>
     public IReadOnlyList<MacroStep> Finish(long elapsedMs)
     {
         if (_finished) return Steps;
         elapsedMs = Math.Clamp(elapsedMs, 0, MaximumDurationMs);
+        // Make final cleanup releases effectively immediate, but allow a
+        // short 25ms press duration if the last real event was a KeyDown.
+        long releaseAt = Math.Min(
+            Math.Max(elapsedMs, _lastEventAt), _lastEventAt + 25);
         foreach (int key in _heldKeys.OrderBy(k =>
                      KeyboardChord.IsModifier(k) ? 1 : 0).ToArray())
         {
-            Append(MacroStepKind.KeyUp, GetKeyName(key)!, elapsedMs);
+            Append(MacroStepKind.KeyUp, GetKeyName(key)!, releaseAt);
         }
         foreach (int button in _heldMouse.Order().ToArray())
         {
@@ -97,7 +104,7 @@ public sealed class MacroRecordingSession
                 (int)MouseControl.Right => "Right",
                 _ => "Middle"
             };
-            Append(MacroStepKind.MouseUp, name, elapsedMs);
+            Append(MacroStepKind.MouseUp, name, releaseAt);
         }
         _heldKeys.Clear();
         _heldMouse.Clear();

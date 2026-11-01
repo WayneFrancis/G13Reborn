@@ -499,3 +499,48 @@ Check(upCount == 2 &&
 Check(originalSequence[0].DelayAfterMs == 20,
     "normalizing an inserted macro leaves the original macro unchanged");
 Console.WriteLine("Record insertion and independent key timing tests passed.");
+
+
+// Regression: clicking "Stop and use recording" from another foreground
+// application must not capture its own left-mouse down/up transitions.
+Check(RecordingEventFilter.ShouldCaptureMouse(true, true, false, false),
+    "mouse clicks in the target application are recorded");
+Check(!RecordingEventFilter.ShouldCaptureMouse(true, true, true, false),
+    "Stop click is rejected even before recorder gains foreground focus");
+Check(!RecordingEventFilter.ShouldCaptureMouse(true, false, true, false),
+    "recorder window clicks are never captured");
+Check(!RecordingEventFilter.ShouldCaptureMouse(true, true, false, true),
+    "injected mouse events remain excluded");
+Check(!RecordingEventFilter.ShouldCaptureMouse(false, true, false, false),
+    "mouse is not recorded once recording is stopped");
+
+// The user may wait several seconds between finishing the actual sequence
+// and clicking Stop. This must not create a long final delay or extra actions.
+var stopButtonRegression = new MacroRecordingSession();
+Check(stopButtonRegression.RecordKeyboard(0x41, true, 10),
+    "capture key down before final Stop click");
+Check(stopButtonRegression.RecordKeyboard(0x41, false, 40),
+    "capture key up before final Stop click");
+var cleanStopSteps = stopButtonRegression.Finish(15_000);
+Check(cleanStopSteps.Count == 2 &&
+      cleanStopSteps[0].DelayAfterMs == 30 &&
+      cleanStopSteps[1].DelayAfterMs == 0,
+    "finishing after a long idle interval appends no Stop mouse events or final delay");
+
+var pendingKeyRelease = new MacroRecordingSession();
+pendingKeyRelease.RecordKeyboard(0x41, true, 10);
+var balancedWithoutLongWait = pendingKeyRelease.Finish(12_000);
+Check(balancedWithoutLongWait.Count == 2 &&
+      balancedWithoutLongWait[0].DelayAfterMs == 25 &&
+      balancedWithoutLongWait[1].Kind == MacroStepKind.KeyUp &&
+      balancedWithoutLongWait[1].DelayAfterMs == 0,
+    "synthetic final release uses at most 25 ms, not time spent clicking Stop");
+
+var pendingMouseRelease = new MacroRecordingSession();
+pendingMouseRelease.RecordMouseButton("Left", true, 12);
+var shortMouseRelease = pendingMouseRelease.Finish(20_000);
+Check(shortMouseRelease.Count == 2 &&
+      shortMouseRelease[0].DelayAfterMs == 25 &&
+      shortMouseRelease[1].Kind == MacroStepKind.MouseUp,
+    "unfinished genuine mouse press releases without long Stop-button delay");
+Console.WriteLine("Recorder Stop button isolation and final-delay regressions passed.");

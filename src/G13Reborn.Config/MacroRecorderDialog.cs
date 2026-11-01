@@ -74,6 +74,12 @@ internal sealed class MacroRecorderDialog : Form
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
+    // Hit-test the *mouse event's screen location*, not only the current
+    // foreground window. When the Stop button is clicked from another app,
+    // WH_MOUSE_LL can see mouse-down before the recorder becomes foreground.
+    [DllImport("user32.dll")]
+    private static extern nint WindowFromPoint(Point point);
+
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
 
@@ -248,15 +254,37 @@ internal sealed class MacroRecorderDialog : Form
         return CallNextHookEx(_keyboardHook, code, wParam, lParam);
     }
 
+    /// <summary>
+    /// The foreground application can still be another process when the
+    /// mouse-down that activates our Stop/Discard button is intercepted.
+    /// Resolve the window under the *event position* and exclude our process
+    /// before either button edge can reach the recording session.
+    /// </summary>
+    private bool MouseTargetsRecorder(Point screenPoint)
+    {
+        if (Bounds.Contains(new System.Drawing.Point(screenPoint.X, screenPoint.Y)))
+            return true;
+
+        nint targetWindow = WindowFromPoint(screenPoint);
+        if (targetWindow == 0) return false;
+
+        GetWindowThreadProcessId(targetWindow, out uint processId);
+        return processId == (uint)Environment.ProcessId;
+    }
+
     private nint OnMouse(int code, nint wParam, nint lParam)
     {
         try
         {
-            if (code >= 0 && _isRecording && OtherApplicationHasFocus())
+            if (code >= 0 && _isRecording)
             {
                 int message = unchecked((int)(long)wParam);
                 MouseHook data = Marshal.PtrToStructure<MouseHook>(lParam);
-                if ((data.Flags & LlMouseInjected) == 0)
+                bool insideRecorder = MouseTargetsRecorder(data.Position);
+                bool externalFocus = OtherApplicationHasFocus();
+                if (RecordingEventFilter.ShouldCaptureMouse(
+                    _isRecording, externalFocus, insideRecorder,
+                    (data.Flags & LlMouseInjected) != 0))
                 {
                     long elapsed = _stopwatch.ElapsedMilliseconds;
                     switch (message)
@@ -293,6 +321,8 @@ internal sealed class MacroRecorderDialog : Form
         if (_ending) return;
         _ending = true;
         StopHooks();
+        // Stop-button travel and click time is not part of the macro.
+        // Finish only synthesizes necessary releases, with a short delay.
         var steps = _session.Finish(_stopwatch.ElapsedMilliseconds);
         if (steps.Count == 0)
         {

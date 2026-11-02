@@ -38,7 +38,7 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
-      <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+
     </ClCompile>
     <Link>
       <AdditionalDependencies>VhfKm.lib;%(AdditionalDependencies)</AdditionalDependencies>

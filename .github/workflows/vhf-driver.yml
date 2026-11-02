@@ -18,6 +18,11 @@ jobs:
         uses: actions/checkout@v4
       - name: Locate MSBuild
         uses: microsoft/setup-msbuild@v2
+      - name: Cache pinned WDK and SDK packages
+        uses: actions/cache@v4
+        with:
+          path: drivers/G13RebornVhid/packages
+          key: windows-2025-wdk-28000.2526-v1
       - name: Restore pinned official WDK and SDK NuGet packages
         shell: pwsh
         run: |

@@ -619,10 +619,16 @@ the control device without injecting input, and `--test-k` requests
 one K press and release. The latter is intended ONLY for later
 testing in an isolated Windows virtual machine.
 
-**There is not yet a built, signed, installed or hardware-tested driver.**
-The normal G13Reborn WinForms application and its default SendInput
-behaviour remain unchanged. The Windows CI checks the .NET client
-and wire-format tests; it does not compile the native WDK project.
+**The native WDK compilation now passes in GitHub Actions.** The
+separate `Experimental VHF driver build (no installation)` workflow
+restores the official Microsoft WDK/SDK 28000.2526 packages and
+successfully produces an experimental `G13RebornVhid.sys` kernel
+driver binary. The build does not sign it, validate or package the
+draft INF, install it, or execute it in a Windows kernel.
+
+The existing G13Reborn WinForms application and default SendInput
+behaviour remain unchanged. The normal Windows CI separately builds
+and tests the .NET VHF probe and wire-format protocol.
 
 On the main computer, the following is safe and will only build C#
 or show an expected device-not-found error:

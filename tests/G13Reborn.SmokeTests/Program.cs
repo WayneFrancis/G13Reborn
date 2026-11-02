@@ -1517,3 +1517,8 @@ Check(RawKeyboardDeviceLabel.Describe(
     RawKeyboardDeviceLabel.Describe(null) == "Unidentified keyboard",
     "non-Logitech and missing paths are labeled conservatively");
 Console.WriteLine("Read-only Raw Input device classification tests passed.");
+
+var sample = VirtualHidKeyboardProtocol.Encode(VirtualHidKeyboardProtocol.CreateReport(0, VirtualHidKeyboardProtocol.HidUsageK));
+Check(Convert.ToHexString(sample) == "564831330100080000000E0000000000", "Virtual HID K key report packet matches the driver contract");
+Check(VirtualHidKeyboardProtocol.ReleaseAll().Length == VirtualHidKeyboardProtocol.PacketLength, "Virtual HID release packet length");
+Console.WriteLine("Virtual HID protocol packet tests passed.");

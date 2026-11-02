@@ -9,9 +9,10 @@ CatalogFile=G13RebornVhid.cat
 PnpLockdown=1
 
 [Manufacturer]
-%Provider%=Models,NTamd64
+; Restrict the Driver Store-only INF to Windows 11 24H2+ (build 26100).
+%Provider%=Models,NTamd64.10.0...26100
 
-[Models.NTamd64]
+[Models.NTamd64.10.0...26100]
 %DeviceDesc%=DriverInstall,ROOT\G13REBORN_VHID
 
 [DestinationDirs]

@@ -1,0 +1,37 @@
+name: Experimental VHF driver build (no installation)
+on:
+  push:
+    paths:
+      - '.github/workflows/vhf-driver.yml'
+      - 'drivers/G13RebornVhid/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-native-driver:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+      - name: Restore pinned official WDK and SDK NuGet packages
+        shell: pwsh
+        run: |
+          nuget restore drivers/G13RebornVhid/packages.config -PackagesDirectory drivers/G13RebornVhid/packages -NonInteractive
+      - name: Compile native WDK driver and generate unsigned package
+        shell: pwsh
+        run: |
+          $project = 'drivers/G13RebornVhid/G13RebornVhid.vcxproj'
+          msbuild $project /m /v:minimal /p:Configuration=Release /p:Platform=x64 /p:DriverTargetPlatform=Desktop /p:SignMode=Off /p:RunCodeAnalysis=false
+          if ($LASTEXITCODE -ne 0) { throw "WDK native build failed: $LASTEXITCODE" }
+      - name: Verify kernel driver binary was compiled
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem drivers/G13RebornVhid -Recurse -Filter G13RebornVhid.sys -File)
+          if ($files.Count -eq 0) { throw "No .sys output was produced" }
+          $files | Select-Object FullName,Length | Format-Table -AutoSize
+          Write-Host "Driver compiled; no signing, installation, or kernel execution performed."

@@ -31,6 +31,10 @@ public sealed class MainForm : Form
     {
         Text = "LCD / backlight...", AutoSize = true
     };
+    private readonly Button _rawInput = new()
+    {
+        Text = "Input source...", AutoSize = true
+    };
     private readonly Button _start = new() { Text = "Start forwarding", AutoSize = true };
     private readonly Button _stop = new() { Text = "Stop / release", AutoSize = true };
     private readonly CheckBox _keyboardMouse = new()
@@ -168,7 +172,7 @@ public sealed class MainForm : Form
         var deviceBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         deviceBar.Controls.AddRange(new Control[]
         {
-            TextLabel("G13 HID"), _devices, _refresh, _hardware, _start, _stop
+            TextLabel("G13 HID"), _devices, _refresh, _hardware, _rawInput, _start, _stop
         });
         root.Controls.Add(deviceBar, 0, 2);
 
@@ -265,6 +269,11 @@ public sealed class MainForm : Form
         {
             if (_running) return;
             using var dialog = new G13HardwareDialog();
+            dialog.ShowDialog(this);
+        };
+        _rawInput.Click += (_, _) =>
+        {
+            using var dialog = new RawInputDiagnosticDialog();
             dialog.ShowDialog(this);
         };
         _start.Click += (_, _) => StartForwarding();

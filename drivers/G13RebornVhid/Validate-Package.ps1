@@ -31,7 +31,10 @@ $inf = [IO.File]::ReadAllText($sourceInf)
 $requiredLines = @(
     '(?im)^\[Version\]\s*$',
     '(?im)^\s*Signature\s*=\s*"\$WINDOWS NT\$"\s*$',
-    '(?im)^\s*CatalogFile\s*=\s*G13RebornVhid\.cat\s*    '(?im)^\s*%DeviceDesc%\s*=\s*DriverInstall\s*,\s*ROOT\\G13REBORN_VHID\s*$',
+    '(?im)^\s*CatalogFile\s*=\s*G13RebornVhid\.cat\s*$',
+    '(?im)^\s*DriverCopyFiles\s*=\s*13\s*$',
+    '(?im)^\s*ServiceBinary\s*=\s*%13%\\G13RebornVhid\.sys\s*$',
+    '(?im)^\s*%DeviceDesc%\s*=\s*DriverInstall\s*,\s*ROOT\\G13REBORN_VHID\s*$',
     '(?im)^\s*HKR\s*,\s*,\s*"LowerFilters"\s*,\s*0x00010000\s*,\s*"vhf"\s*$'
 )
 foreach ($pattern in $requiredLines) {

@@ -54,7 +54,7 @@ Sources:
 
 On the privileged \`\\.\G13RebornVhid\` path, send
 \`CTL_CODE(FILE_DEVICE_UNKNOWN,0x801,METHOD_BUFFERED,FILE_WRITE_DATA)\`
-(\`0x226004\`) with 16 bytes:
+(\`0x22A004\`) with 16 bytes:
 
 | Offset | Field | Value |
 | --- | --- | --- |

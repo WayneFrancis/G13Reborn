@@ -1518,6 +1518,12 @@ Check(RawKeyboardDeviceLabel.Describe(
     "non-Logitech and missing paths are labeled conservatively");
 Console.WriteLine("Read-only Raw Input device classification tests passed.");
 
+// Catch mismatches between the C# IOCTL literal and the kernel CTL_CODE macro.
+// FILE_DEVICE_UNKNOWN=0x22, FILE_WRITE_DATA=2, function=0x801, METHOD_BUFFERED=0.
+const uint expectedVhfIoctl = (0x22u << 16) | (2u << 14) | (0x801u << 2);
+Check(expectedVhfIoctl == 0x0022A004 &&
+      VirtualHidKeyboardProtocol.IoctlSendKeyboard == expectedVhfIoctl,
+    "Virtual HID keyboard IOCTL matches native FILE_WRITE_DATA CTL_CODE");
 var sample = VirtualHidKeyboardProtocol.Encode(VirtualHidKeyboardProtocol.CreateReport(0, VirtualHidKeyboardProtocol.HidUsageK));
 Check(Convert.ToHexString(sample) == "564831330100080000000E0000000000", "Virtual HID K key report packet matches the driver contract");
 Check(VirtualHidKeyboardProtocol.ReleaseAll().Length == VirtualHidKeyboardProtocol.PacketLength, "Virtual HID release packet length");

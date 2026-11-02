@@ -9,7 +9,9 @@ namespace G13Reborn.Mapping;
 public static class VirtualHidKeyboardProtocol
 {
     public const string DevicePath = @"\\.\G13RebornVhid";
-    public const uint IoctlSendKeyboard = 0x00226004;
+    // CTL_CODE(FILE_DEVICE_UNKNOWN=0x22, 0x801, METHOD_BUFFERED=0, FILE_WRITE_DATA=2).
+    // Keep this value in sync with IOCTL_G13VHF_KEYBOARD in the native driver.
+    public const uint IoctlSendKeyboard = 0x0022A004;
     public const uint Magic = 0x33314856; // ASCII "VH13" little-endian
     public const ushort Version = 1;
     public const int ReportLength = 8;

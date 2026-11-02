@@ -76,11 +76,31 @@ Windows 11 WDK and SDK NuGet packages (version 10.0.28000.2526)
 and compiles the KMDF/VHF `.sys` code on a Windows 2025 runner with
 Visual Studio 2026/MSBuild 18.
 
-The INF currently remains a **draft**, included as a non-build item
+The INF remains a **draft**, included as a non-build item
 because the hosted WDK environment did not expose the `stampinf.exe`
-packaging tool. The native CI job verifies code compilation ONLY;
-it does **not** validate the INF, sign any driver, build a PnP package,
-install a kernel component, or exercise input against a live OS.
+packaging tool. The native CI job builds the driver, then calls
+`Validate-Package.ps1` to stage the unsigned `.inf` and `.sys` in an
+ephemeral directory. The script checks a few essential source-level
+declarations and attempts **official** `InfVerif /w /v` and
+`Inf2Cat /nocat` checks for Windows 11 24H2 and 25H2 x64.
 
-Those are distinct milestones that must pass in an isolated VM
-before attempting installation or attaching the normal G13 mappings.
+**Read the CI job summary for each result.** A tool reported as
+`NOT RUN` means the hosted runner lacked it; a green job alone
+does **not** mean that Microsoft validated the INF or package.
+If a tool is found, a nonzero validation exit code fails the job.
+A developer with a full WDK installation can require both tools:
+
+```powershell
+# After compiling the native x64 Release driver on an isolated dev VM:
+./drivers/G13RebornVhid/Validate-Package.ps1 -RequireWdkTools
+```
+
+This step **does not** generate a catalog, sign any driver,
+install a kernel component, invoke `pnputil`, or exercise input against
+a live OS. The staged files are not published as an installable
+artifact. INF validation and signability must pass before a separate,
+reviewed VM-only driver installation test.
+
+References:
+- https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/infverif
+- https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/inf2cat

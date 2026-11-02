@@ -68,4 +68,4 @@ jobs:
       - name: Stage unsigned package and run available WDK validation tools
         shell: pwsh
         run: |
-          ./drivers/G13RebornVhid/Validate-Package.ps1 -OutputDirectory "$env:RUNNER_TEMP/G13Reborn-Vhf-Package-Check"
+          ./drivers/G13RebornVhid/Validate-Package.ps1 -OutputDirectory "$env:RUNNER_TEMP/G13Reborn-Vhf-Package-Check" -RequireWdkTools

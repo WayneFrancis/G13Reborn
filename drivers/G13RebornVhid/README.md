@@ -84,9 +84,13 @@ ephemeral directory. The script checks a few essential source-level
 declarations and attempts **official** `InfVerif /w /v` and
 `Inf2Cat /nocat` checks for Windows 11 24H2 and 25H2 x64.
 
+The CI job additionally downloads the official Microsoft x86 WDK NuGet package
+to search for Inf2Cat (which can be an x86 host tool even for x64 drivers).
+This is tool discovery only; it does not change the target driver architecture.
+
 **Read the CI job summary for each result.** A tool reported as
-`NOT RUN` means the hosted runner lacked it; a green job alone
-does **not** mean that Microsoft validated the INF or package.
+`NOT RUN` means the hosted runner lacked it even after discovery; a green job
+alone does **not** mean that Microsoft validated the INF or package.
 If a tool is found, a nonzero validation exit code fails the job.
 A developer with a full WDK installation can require both tools:
 

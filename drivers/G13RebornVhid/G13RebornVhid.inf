@@ -15,7 +15,7 @@ PnpLockdown=1
 %DeviceDesc%=DriverInstall,ROOT\G13REBORN_VHID
 
 [DestinationDirs]
-DriverCopyFiles=12
+DriverCopyFiles=13
 
 [SourceDisksNames]
 1=%DiskLabel%,,,
@@ -37,7 +37,7 @@ DisplayName=%DeviceDesc%
 ServiceType=1
 StartType=3
 ErrorControl=1
-ServiceBinary=%12%\G13RebornVhid.sys
+ServiceBinary=%13%\G13RebornVhid.sys
 
 [DriverInstall.NT.Wdf]
 KmdfService=G13RebornVhid,KmdfInstall

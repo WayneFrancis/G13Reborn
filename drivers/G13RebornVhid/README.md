@@ -28,7 +28,7 @@ Sources:
   keyboard report to release keys.
 - The descriptor is a basic 6-key-rollover keyboard. It implements no media
   keys, mouse, consumer controls or output features.
-- Source code and INF **do not imply a buildable, installable or signed
+- The source, the preliminary INF, and even a successful .sys build **do not imply an installable or signed
   driver**. Do not run \`pnputil\`, enable test-signing, disable Secure Boot
   or change kernel configuration based solely on this prototype.
 - The production .NET solution continues to use the existing \`SendInput\`
@@ -68,3 +68,19 @@ On the privileged \`\\.\G13RebornVhid\` path, send
 The client and driver agree on this contract; a smoke test verifies the
 exact serialized packet bytes. USB HID usage 0x0E is the letter K on a
 standard keyboard layout. Submitting all zero bytes releases all keys.
+
+## Native CI build stage
+
+The separate `.github/workflows/vhf-driver.yml` job restores Microsoft's
+Windows 11 WDK and SDK NuGet packages (version 10.0.28000.2526)
+and compiles the KMDF/VHF `.sys` code on a Windows 2025 runner with
+Visual Studio 2026/MSBuild 18.
+
+The INF currently remains a **draft**, included as a non-build item
+because the hosted WDK environment did not expose the `stampinf.exe`
+packaging tool. The native CI job verifies code compilation ONLY;
+it does **not** validate the INF, sign any driver, build a PnP package,
+install a kernel component, or exercise input against a live OS.
+
+Those are distinct milestones that must pass in an isolated VM
+before attempting installation or attaching the normal G13 mappings.

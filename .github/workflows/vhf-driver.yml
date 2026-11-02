@@ -22,7 +22,7 @@ jobs:
         shell: pwsh
         run: |
           nuget restore drivers/G13RebornVhid/packages.config -PackagesDirectory drivers/G13RebornVhid/packages -NonInteractive
-      - name: Compile native WDK driver and generate unsigned package
+      - name: Compile native WDK driver binary (no INF packaging)
         shell: pwsh
         run: |
           $project = 'drivers/G13RebornVhid/G13RebornVhid.vcxproj'

@@ -46,7 +46,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="G13RebornVhid.c" />
-    <Inf Include="G13RebornVhid.inf" />
+    <!-- Static draft INF retained for later packaging validation; driver
+         compilation must not depend on the stampinf.exe utility. -->
+    <None Include="G13RebornVhid.inf" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

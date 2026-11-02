@@ -602,3 +602,36 @@ a different Windows input path. This monitor does not attribute
 GetMessage/WM_KEYDOWN/SendInput origin or determine anti-cheat
 compatibility. It is a narrow source-identification diagnostic and
 does not install any drivers.
+
+
+## Experimental virtual HID keyboard backend (source-stage only)
+
+Our Windows Raw Input testing confirmed a difference between LGS and
+G13Reborn: an LGS G-key mapped to K produces input from Logitech's
+virtual HID keyboard (PID C232); G13Reborn's current SendInput
+backend produces K events without a Raw Input device handle.
+
+An independent, experimental Windows KMDF/VHF keyboard source project
+is now in [drivers/G13RebornVhid](drivers/G13RebornVhid/README.md).
+A separate C# project, `src/G13Reborn.VhfProbe`, encodes the binary
+keyboard reports and exposes two explicit actions: `--probe` opens
+the control device without injecting input, and `--test-k` requests
+one K press and release. The latter is intended ONLY for later
+testing in an isolated Windows virtual machine.
+
+**There is not yet a built, signed, installed or hardware-tested driver.**
+The normal G13Reborn WinForms application and its default SendInput
+behaviour remain unchanged. The Windows CI checks the .NET client
+and wire-format tests; it does not compile the native WDK project.
+
+On the main computer, the following is safe and will only build C#
+or show an expected device-not-found error:
+
+```powershell
+dotnet build G13Reborn.slnx -c Release
+dotnet run --project src/G13Reborn.VhfProbe -- --probe
+```
+
+Do not enable Windows driver test-signing or alter Secure Boot on the
+primary gaming PC to run this prototype. See the native project
+notes for the build, security and verification requirements.

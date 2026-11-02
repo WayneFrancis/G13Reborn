@@ -4,5 +4,6 @@
   <Project Path="src/G13Reborn.Diagnostics/G13Reborn.Diagnostics.csproj" />
   <Project Path="src/G13Reborn.Mapping/G13Reborn.Mapping.csproj" />
   <Project Path="src/G13Reborn.Config/G13Reborn.Config.csproj" />
+  <Project Path="src/G13Reborn.VhfProbe/G13Reborn.VhfProbe.csproj" />
   <Project Path="tests/G13Reborn.SmokeTests/G13Reborn.SmokeTests.csproj" />
 </Solution>

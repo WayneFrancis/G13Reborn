@@ -68,7 +68,7 @@ function Find-WdkTool([string]$name) {
             $search = if ($folder -eq '.') { $root } else { Join-Path $root $folder }
             if (-not (Test-Path -LiteralPath $search -PathType Container)) { continue }
             $found = Get-ChildItem -LiteralPath $search -Filter $name -File -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+                Where-Object { $_.FullName -match '[\\/]x(?:64|86)[\\/]' } |
                 Sort-Object FullName -Descending |
                 Select-Object -First 1
             if ($found) { return $found.FullName }

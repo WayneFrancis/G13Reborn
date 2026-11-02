@@ -84,11 +84,19 @@ ephemeral directory. The script checks a few essential source-level
 declarations and attempts **official** `InfVerif /w /v` and
 `Inf2Cat /nocat` checks for Windows 11 24H2 and 25H2 x64.
 
-**Read the CI job summary for each result.** A tool reported as
-`NOT RUN` means the hosted runner lacked it; a green job alone
-does **not** mean that Microsoft validated the INF or package.
-If a tool is found, a nonzero validation exit code fails the job.
-A developer with a full WDK installation can require both tools:
+The CI job additionally restores Microsoft's official x86 WDK NuGet package.
+That package contains the x86-host `Inf2Cat.exe` used to check the **x64**
+driver package. The CI step runs `Validate-Package.ps1 -RequireWdkTools`:
+both `InfVerif /w /v` and `Inf2Cat /nocat` are mandatory, and a failed
+validation or missing validator fails the workflow.
+
+The first successful native CI execution verified **INF is VALID** and
+**Inf2Cat signability test complete — Errors: None** for Windows 11
+24H2 and 25H2 x64. This establishes static INF and package-signability
+checks only; it does **not** produce a signed/installable package or prove
+kernel-mode behavior. Check the GitHub workflow logs for the current result.
+
+A developer with a full WDK installation can run the same required checks:
 
 ```powershell
 # After compiling the native x64 Release driver on an isolated dev VM:

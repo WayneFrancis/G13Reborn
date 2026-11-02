@@ -1500,3 +1500,20 @@ finally
         Directory.Delete(tempProfiles, recursive: true);
 }
 Console.WriteLine("Read-only diagnostic and local profile ZIP backup tests passed.");
+
+
+// Read-only Raw Input diagnostics never assume PID C232 identifies the
+// LGS bus rather than the G HUB bus: both use Logitech virtual HID PIDs.
+Check(RawKeyboardDeviceLabel.Describe(
+    @"\\?\HID#VID_046D&PID_C232#1&abcd") ==
+    "Logitech virtual keyboard (C232; LGS/G HUB unknown)",
+    "C232 keyboard raw input is classified as virtual, without guessing LGS versus G HUB");
+Check(RawKeyboardDeviceLabel.Describe(
+    @"\\?\HID#VID_046D&PID_C539#1&abcd") ==
+    "Other Logitech HID keyboard",
+    "different Logitech keyboard is not mislabeled as a virtual device");
+Check(RawKeyboardDeviceLabel.Describe(
+    @"\\?\HID#VID_1234&PID_9876#1&abcd") == "Other keyboard" &&
+    RawKeyboardDeviceLabel.Describe(null) == "Unidentified keyboard",
+    "non-Logitech and missing paths are labeled conservatively");
+Console.WriteLine("Read-only Raw Input device classification tests passed.");

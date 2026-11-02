@@ -559,3 +559,46 @@ paths and macro text. **No on-device memory writes are implemented.**
 Primary sources: Logitech's 2008 G13 announcement documents the
 onboard-profile claim; Linux `hid-lg-g15` documents G13's known
 runtime LED report IDs but not persistent profile access.
+
+
+## Input source diagnostic: LGS virtual HID versus G13Reborn SendInput
+
+Open **Input source...** in the main G13Reborn window. This is a
+separate, **read-only** Raw Input monitor and does not require the
+G13Reborn input-forwarding service to be started. It can also run
+while forwarding is active.
+
+Click **Start capture** to register for the Windows generic keyboard
+HID usage (0x01/0x06). It listens in the background using
+RIDEV_INPUTSINK without disabling or suppressing Windows' ordinary
+input. The display records **only the K virtual key** (press and
+release), timestamp, descriptive device category, and full Raw Input
+device path. All other keys are discarded. It neither saves events
+to disk nor injects or changes any keyboard/mouse input.
+**Stop capture** and closing the window unregister the listener.
+
+To compare input paths, use the same K key in three distinct runs:
+
+1. Press K on a physical keyboard. Expect a keyboard HID path.
+2. With LGS configured to output K, press the assigned G13 key.
+   If the Logitech virtual keyboard generates the report, the
+   Raw Input device path may show VID_046D&PID_C232.
+3. With LGS stopped and G13Reborn mapping a G13 key to K, press
+   that key. Ordinary SendInput inserts a synthesized event into
+   the Windows input stream, not a HID report, so it is not expected
+   to appear as a hardware-origin Raw Input event.
+
+The Logitech virtual keyboard PID C232 is shared by LGS and G HUB;
+**the VID/PID alone cannot identify which virtual bus generated the
+event**. Full raw device paths allow correlation with Windows
+Device Manager and the PnP instances. You can click **Copy results**
+to copy the displayed table to the clipboard; no automatic export
+is performed. Review device paths before sharing them because they
+may include machine-specific identifiers.
+
+A *missing* Raw Input K event is informative but not definitive:
+the intended application could receive a synthetic keystroke through
+a different Windows input path. This monitor does not attribute
+GetMessage/WM_KEYDOWN/SendInput origin or determine anti-cheat
+compatibility. It is a narrow source-identification diagnostic and
+does not install any drivers.

@@ -1,0 +1,58 @@
+; Experimental ROOT-enumerated KMDF/VHF keyboard. Not a signed release.
+[Version]
+Signature="$WINDOWS NT$"
+Class=HIDClass
+ClassGuid={745A17A0-74D3-11D0-B6FE-00A0C90F57DA}
+Provider=%Provider%
+DriverVer=11/02/2026,0.1.0.0
+CatalogFile=G13RebornVhid.cat
+PnpLockdown=1
+
+[Manufacturer]
+%Provider%=Models,NTamd64
+
+[Models.NTamd64]
+%DeviceDesc%=DriverInstall,ROOT\G13REBORN_VHID
+
+[DestinationDirs]
+DriverCopyFiles=12
+
+[SourceDisksNames]
+1=%DiskLabel%,,,
+
+[SourceDisksFiles]
+G13RebornVhid.sys=1
+
+[DriverInstall.NT]
+CopyFiles=DriverCopyFiles
+
+[DriverCopyFiles]
+G13RebornVhid.sys
+
+[DriverInstall.NT.Services]
+AddService=G13RebornVhid,0x00000002,DriverService
+
+[DriverService]
+DisplayName=%DeviceDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\G13RebornVhid.sys
+
+[DriverInstall.NT.Wdf]
+KmdfService=G13RebornVhid,KmdfInstall
+
+[KmdfInstall]
+KmdfLibraryVersion=1.33
+
+; VHF is the required inbox lower filter for the source driver.
+[DriverInstall.NT.HW]
+AddReg=VhfFilter
+
+[VhfFilter]
+HKR,,"LowerFilters",0x00010000,"vhf"
+
+[Strings]
+Provider="G13Reborn Development"
+DiskLabel="G13Reborn virtual keyboard"
+DeviceDesc="G13Reborn Experimental Virtual HID Keyboard"

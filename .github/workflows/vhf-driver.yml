@@ -4,6 +4,10 @@ on:
     paths:
       - '.github/workflows/vhf-driver.yml'
       - 'drivers/G13RebornVhid/**'
+  pull_request:
+    paths:
+      - '.github/workflows/vhf-driver.yml'
+      - 'drivers/G13RebornVhid/**'
   workflow_dispatch:
 
 permissions:
@@ -47,3 +51,7 @@ jobs:
           if ($files.Count -eq 0) { throw "No .sys output was produced" }
           $files | Select-Object FullName,Length | Format-Table -AutoSize
           Write-Host "Driver compiled; no signing, installation, or kernel execution performed."
+      - name: Stage unsigned package and run available WDK validation tools
+        shell: pwsh
+        run: |
+          ./drivers/G13RebornVhid/Validate-Package.ps1 -OutputDirectory "$env:RUNNER_TEMP/G13Reborn-Vhf-Package-Check"

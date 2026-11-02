@@ -51,6 +51,20 @@ jobs:
           if ($files.Count -eq 0) { throw "No .sys output was produced" }
           $files | Select-Object FullName,Length | Format-Table -AutoSize
           Write-Host "Driver compiled; no signing, installation, or kernel execution performed."
+      - name: Restore official x86 WDK tools for Inf2Cat discovery
+        shell: pwsh
+        run: |
+          # Inf2Cat may be distributed as an x86 host tool even for x64 drivers.
+          # Install only into the temporary CI NuGet packages directory;
+          # this does not modify Windows, install drivers, or change the x64 native build.
+          nuget install Microsoft.Windows.WDK.x86 -Version 10.0.28000.2526 -OutputDirectory drivers/G13RebornVhid/packages -NonInteractive
+          if ($LASTEXITCODE -ne 0) { throw "x86 WDK NuGet restore failed: $LASTEXITCODE" }
+          $tools = @(Get-ChildItem drivers/G13RebornVhid/packages -Filter inf2cat.exe -File -Recurse -ErrorAction SilentlyContinue)
+          if ($tools.Count -gt 0) {
+            $tools | Select-Object -ExpandProperty FullName
+          } else {
+            Write-Warning "Official x86 WDK NuGet package also has no Inf2Cat.exe; signability remains UNVERIFIED."
+          }
       - name: Stage unsigned package and run available WDK validation tools
         shell: pwsh
         run: |

@@ -89,6 +89,7 @@ internal sealed class K8850Dialog : Form
             _store.Profiles.Remove(_profile); _store.Active = _store.Profiles[0].Name; Save(); ReloadProfiles();
         });
         Add("Save", Save);
+        Add("Copy layer...", CopyLayer);
         Add("Validate profile...", ValidateProfile);
         Add("Export profile...", ExportProfile);
         Add("Import profile...", ImportProfile);
@@ -232,6 +233,52 @@ internal sealed class K8850Dialog : Form
             LayerNames = clone ? new(_profile.LayerNames) : new(), Labels = clone ? new(_profile.Labels) : new() };
         _store.Profiles.Add(p); _store.Active = p.Name; Save(); ReloadProfiles();
     }
+    private void CopyLayer()
+    {
+        using var dialog = new Form { Text = "Copy hardware layer", Size = new Size(460, 250),
+            StartPosition = FormStartPosition.CenterParent };
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+            WrapContents = false, Padding = new Padding(12) };
+        dialog.Controls.Add(panel);
+        int source = (int)_layer.Value;
+        var destination = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 350 };
+        var targets = Enumerable.Range(1, 3).Where(n => n != source).ToArray();
+        foreach (int n in targets) destination.Items.Add($"Layer {n}: {_profile.LayerNames.GetValueOrDefault(n, "")}");
+        destination.SelectedIndex = 0;
+        panel.Controls.Add(new Label { Text = $"Copy layer {source} to:", AutoSize = true });
+        panel.Controls.Add(destination);
+        var replace = new CheckBox { Text = "Replace existing local destination assignments", AutoSize = true };
+        var copyName = new CheckBox { Text = "Copy layer name", AutoSize = true };
+        panel.Controls.Add(replace);
+        panel.Controls.Add(copyName);
+        var ok = new Button { Text = "Copy locally", DialogResult = DialogResult.OK, AutoSize = true };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+        panel.Controls.Add(ok);
+        panel.Controls.Add(cancel);
+        dialog.AcceptButton = ok;
+        dialog.CancelButton = cancel;
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        int target = targets[destination.SelectedIndex];
+        var entries = Enumerable.Range(1, 25).Select(slot => (Slot: slot, Key: $"{source}:{slot}"))
+            .Where(x => _profile.Bindings.ContainsKey(x.Key))
+            .Select(x => (x.Slot, Binding: _profile.Bindings[x.Key], Label: _profile.Labels.GetValueOrDefault(x.Key, "")))
+            .Where(x => replace.Checked || !_profile.Bindings.ContainsKey($"{target}:{x.Slot}")).ToArray();
+        foreach (var entry in entries) K8850Binding.Encode(entry.Slot, target, entry.Binding);
+        if (replace.Checked && entries.Any(x => _profile.Bindings.ContainsKey($"{target}:{x.Slot}")) &&
+            MessageBox.Show(this, $"Replace overlapping assignments on layer {target}? Unknown source slots will not erase destination slots.",
+                "Confirm layer copy", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+        foreach (var entry in entries)
+            SetLocalAssignment(_profile, $"{target}:{entry.Slot}", entry.Binding, entry.Label);
+        if (copyName.Checked)
+        {
+            if (_profile.LayerNames.TryGetValue(source, out var name)) _profile.LayerNames[target] = name;
+            else _profile.LayerNames.Remove(target);
+        }
+        _layer.Value = target;
+        ShowBinding();
+        _status.Text = $"Copied {entries.Length} local assignments from layer {source} to {target}. No hardware written.";
+    }
+
     private void GenerateGamingProfile()
     {
         using var dialog = new Form { Text = "Generate gaming profile", Size = new Size(530, 430),
@@ -599,6 +646,31 @@ internal sealed class K8850Dialog : Form
         UpdateUpload();
     }
 
+    private bool ReviewUpload(KeyValuePair<string, string>[] entries, string warning)
+    {
+        using var dialog = new Form { Text = "Review hardware upload", Size = new Size(850, 500),
+            StartPosition = FormStartPosition.CenterParent };
+        var grid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            RowHeadersVisible = false };
+        foreach (var title in new[] { "Layer:slot", "Action label", "Last sent (not readback)", "New assignment" })
+            grid.Columns.Add(title, title);
+        foreach (var entry in entries.OrderBy(x => int.Parse(x.Key.Split(':')[0])).ThenBy(x => int.Parse(x.Key.Split(':')[1])))
+            grid.Rows.Add(entry.Key, _profile.Labels.GetValueOrDefault(entry.Key, ""),
+                _store.LastSent.GetValueOrDefault(SentKey(entry.Key), "Unknown"), entry.Value);
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48 };
+        var upload = new Button { Text = "Confirm hardware upload", AutoSize = true, DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
+        footer.Controls.AddRange(new Control[] { upload, cancel });
+        var info = new Label { Dock = DockStyle.Top, Height = 85,
+            Text = $"Write {entries.Length} configured assignment(s). Unknown slots are not written. Last sent values are local history, not hardware readback." + warning };
+        dialog.Controls.Add(grid);
+        dialog.Controls.Add(footer);
+        dialog.Controls.Add(info);
+        dialog.CancelButton = cancel;
+        return dialog.ShowDialog(this) == DialogResult.OK;
+    }
+
     private async Task UploadAsync(int mode)
     {
         if (_busy || _devices.SelectedItem is not Choice choice) return;
@@ -615,8 +687,7 @@ internal sealed class K8850Dialog : Form
                 throw new InvalidOperationException("Profile contains unsupported layers above 3. No bindings were written.");
             string layerWarning = reports.Any(r => r[3] != 1)
                 ? "\r\n\r\nIncludes layers 2 or 3. Use the physical layer button to activate them." : "";
-            if (MessageBox.Show(this, $"Overwrite {reports.Length} configured binding(s)? Unknown slots will not be written." + layerWarning,
-                "Confirm hardware write", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            if (!ReviewUpload(entries, layerWarning)) return;
             _busy = true;
             foreach (Control control in Controls) control.Enabled = false;
             for (int i = 0; i < reports.Length; i++)

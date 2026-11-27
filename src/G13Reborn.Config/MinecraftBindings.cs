@@ -1,0 +1,87 @@
+namespace G13Reborn.Config;
+
+internal sealed class MinecraftBindings
+{
+    private readonly Dictionary<string, List<string>> _actions = new(StringComparer.OrdinalIgnoreCase);
+    public int Count { get; private set; }
+
+    public static MinecraftBindings Load(string path) => Parse(File.ReadLines(path));
+
+    public static MinecraftBindings Parse(IEnumerable<string> lines)
+    {
+        var result = new MinecraftBindings();
+        foreach (string line in lines)
+        {
+            if (!line.StartsWith("key_", StringComparison.Ordinal)) continue;
+            int separator = line.IndexOf(':');
+            if (separator <= 4) continue;
+            string action = line[4..separator];
+            string[] parts = line[(separator + 1)..].Trim().Split(':');
+            if (parts.Length > 2) continue;
+            string input = parts[0].Trim().ToLowerInvariant();
+            if (input.StartsWith("key.scancode.")) input = input[4..];
+            if (input == "key.keyboard.unknown" || !(input.StartsWith("key.keyboard.") ||
+                input.StartsWith("key.mouse.") || input.StartsWith("scancode."))) continue;
+            string modifier = parts.Length == 2 ? parts[1].Trim().ToUpperInvariant() : "";
+            if (modifier == "NONE") modifier = "";
+            if (modifier is not ("" or "CONTROL" or "SHIFT" or "ALT")) continue;
+            string signature = input + ":" + modifier;
+            if (!result._actions.TryGetValue(signature, out var actions))
+                result._actions[signature] = actions = new();
+            if (!actions.Contains(action)) { actions.Add(action); result.Count++; }
+        }
+        return result;
+    }
+
+    public IReadOnlyList<string> Match(string binding)
+    {
+        string? signature;
+        try { signature = Signature(K8850Binding.Encode(1, 1, binding)); }
+        catch { return Array.Empty<string>(); }
+        return signature != null && _actions.TryGetValue(signature, out var actions)
+            ? actions : Array.Empty<string>();
+    }
+
+    private static string? Signature(byte[] report)
+    {
+        if (report[4] == 2 && report[12] == 0 && report[9] is 0xb5 or 0xb6)
+            return "scancode.256:"; // Observed Minecraft collision, not Windows equivalence.
+        if (report[4] == 3 && report[9] == 0 && report[15] == 0 && report[18] == 0 && report[21] == 0)
+            return report[12] switch { 1 => "key.mouse.left:", 2 => "key.mouse.right:", 4 => "key.mouse.middle:", _ => null };
+        if (report[4] != 1 || report[6] is < 1 or > 2) return null;
+        string modifier = "";
+        int offset = 9;
+        if (report[6] == 2)
+        {
+            modifier = report[9] switch {
+                0xf1 or 0xf5 => "CONTROL", 0xf2 or 0xf6 => "SHIFT", 0xf3 or 0xf7 => "ALT", _ => "?"
+            };
+            if (modifier == "?") return null;
+            offset = 12;
+        }
+        byte code = report[offset];
+        string? key = code switch {
+            >= 4 and <= 29 => "key.keyboard." + (char)('a' + code - 4),
+            >= 0x1e and <= 0x26 => "key.keyboard." + (code - 0x1e + 1),
+            0x27 => "key.keyboard.0",
+            >= 0x3a and <= 0x45 => "key.keyboard.f" + (code - 0x3a + 1),
+            >= 0x68 and <= 0x73 => "key.keyboard.f" + (code - 0x68 + 13),
+            >= 0x87 and <= 0x8c => "scancode." + new[] { 115, 112, 125, 121, 123, 92 }[code - 0x87],
+            0x92 => "scancode.120", 0x93 => "scancode.119", 0x94 => "key.keyboard.f24",
+            0x28 => "key.keyboard.enter", 0x29 => "key.keyboard.escape",
+            0x2a => "key.keyboard.backspace", 0x2b => "key.keyboard.tab", 0x2c => "key.keyboard.space",
+            0x49 => "key.keyboard.insert", 0x4a => "key.keyboard.home", 0x4b => "key.keyboard.page.up",
+            0x4c => "key.keyboard.delete", 0x4d => "key.keyboard.end", 0x4e => "key.keyboard.page.down",
+            0x4f => "key.keyboard.right", 0x50 => "key.keyboard.left", 0x51 => "key.keyboard.down", 0x52 => "key.keyboard.up",
+            0x46 => "key.keyboard.print.screen", 0x47 => "key.keyboard.scroll.lock", 0x48 => "key.keyboard.pause",
+            0x53 => "key.keyboard.num.lock",
+            >= 0x59 and <= 0x61 => "key.keyboard.keypad." + (code - 0x59 + 1),
+            0x62 => "key.keyboard.keypad.0",
+            0x54 => "key.keyboard.keypad.divide", 0x55 => "key.keyboard.keypad.multiply",
+            0x56 => "key.keyboard.keypad.subtract", 0x57 => "key.keyboard.keypad.add",
+            0x58 => "key.keyboard.keypad.enter", 0x63 => "key.keyboard.keypad.decimal",
+            0x67 => "key.keyboard.keypad.equal", _ => null
+        };
+        return key == null ? null : key + ":" + modifier;
+    }
+}

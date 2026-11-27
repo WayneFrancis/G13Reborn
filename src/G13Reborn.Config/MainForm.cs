@@ -134,6 +134,7 @@ public sealed class MainForm : Form
         Size = new Size(1050, 800);
         MinimumSize = new Size(880, 600);
         StartPosition = FormStartPosition.CenterScreen;
+        WindowPlacement.Attach(this, "main");
 
         var root = new TableLayoutPanel
         {

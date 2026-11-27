@@ -1,3 +1,4 @@
+using G13Reborn.Config;
 using G13Reborn.Device;
 using G13Reborn.Device.Hid;
 using G13Reborn.VirtualController;
@@ -1528,3 +1529,48 @@ var sample = VirtualHidKeyboardProtocol.Encode(VirtualHidKeyboardProtocol.Create
 Check(Convert.ToHexString(sample) == "564831330100080000000E0000000000", "Virtual HID K key report packet matches the driver contract");
 Check(VirtualHidKeyboardProtocol.ReleaseAll().Length == VirtualHidKeyboardProtocol.PacketLength, "Virtual HID release packet length");
 Console.WriteLine("Virtual HID protocol packet tests passed.");
+
+// K8850 packet and binding regression tests: no HID device access.
+static void K8850Packet(byte[] actual, params (int Offset, byte Value)[] fields)
+{
+    var expected = new byte[64];
+    foreach (var (offset, value) in fields) expected[offset] = value;
+    Check(actual.SequenceEqual(expected), "K8850 exact packet: " + Convert.ToHexString(expected));
+}
+static void K8850Reject<T>(Action action, string description) where T : Exception
+{
+    bool rejected = false;
+    try { action(); } catch (T) { rejected = true; }
+    Check(rejected, description);
+}
+Check(Enumerable.Range(1, 16).All(i => K8850Protocol.Button(i) == i), "K8850 button slots");
+for (int knob = 1; knob <= 3; knob++)
+    foreach (var action in Enum.GetValues<K8850Protocol.KnobAction>())
+        Check(K8850Protocol.Knob(knob, action) == 17 + (knob - 1) * 3 + (int)action, "K8850 encoder slot");
+K8850Packet(K8850Protocol.Finish(), (0,3), (1,0xfd), (2,0xfe), (3,0xff));
+K8850Packet(K8850Binding.Encode(25,16,"Ctrl+Shift+A"), (0,3),(1,0xfd),(2,25),(3,16),(4,1),(6,3),(9,0xf1),(12,0xf2),(15,4));
+K8850Packet(K8850Binding.Encode(1,1,"Volume Up"), (0,3),(1,0xfd),(2,1),(3,1),(4,2),(6,2),(9,0xe9));
+K8850Packet(K8850Protocol.Media(1,1,0x192), (0,3),(1,0xfd),(2,1),(3,1),(4,2),(6,2),(9,0x92),(12,1));
+K8850Packet(K8850Binding.Encode(1,1,"Wheel Down"), (0,3),(1,0xfd),(2,1),(3,1),(4,3),(5,1),(6,4),(21,0xff));
+K8850Packet(K8850Binding.Encode(1,1,"Right Click"), (0,3),(1,0xfd),(2,1),(3,1),(4,3),(5,1),(6,4),(12,2));
+for (int i = 1; i <= 24; i++)
+{
+    byte usage = (byte)(i <= 12 ? 0x3a + i - 1 : 0x68 + i - 13);
+    Check(K8850Binding.Encode(1,1,$"F{i}").SequenceEqual(K8850Protocol.Keyboard(1,1,usage)), $"K8850 F{i} usage");
+}
+for (int i = 1; i <= 9; i++)
+{
+    Check(K8850Binding.Encode(1,1,$"International {i}")[9] == 0x86+i, $"K8850 International {i}");
+    Check(K8850Binding.Encode(1,1,$"Language {i}")[9] == 0x8f+i, $"K8850 Language {i}");
+}
+Check(K8850Binding.Encode(1,1,"hex: 68").SequenceEqual(K8850Binding.Encode(1,1,"F13")), "K8850 raw hex equals named F13");
+Check(K8850Binding.Encode(1,1,"A,B")[12] == 5, "K8850 sequence encoding");
+Check(K8850Protocol.Keyboard(1,1,Enumerable.Repeat((byte)4,18).ToArray())[60] == 4, "K8850 maximum token count");
+K8850Reject<ArgumentOutOfRangeException>(() => K8850Protocol.Keyboard(0,1,4), "K8850 invalid slot");
+K8850Reject<ArgumentOutOfRangeException>(() => K8850Protocol.Keyboard(1,17,4), "K8850 invalid layer");
+K8850Reject<ArgumentOutOfRangeException>(() => K8850Protocol.Keyboard(1,1), "K8850 empty tokens");
+K8850Reject<ArgumentOutOfRangeException>(() => K8850Protocol.Keyboard(1,1,new byte[19]), "K8850 excessive tokens");
+K8850Reject<FormatException>(() => K8850Binding.Encode(1,1,"F25"), "K8850 invalid named key");
+K8850Reject<FormatException>(() => K8850Binding.Encode(1,1,"A+B"), "K8850 invalid chord");
+K8850Reject<ArgumentException>(() => K8850Protocol.Mouse(1,1,buttons:1,wheel:1), "K8850 mixed mouse actions");
+Console.WriteLine("K8850 protocol and binding regression tests passed.");

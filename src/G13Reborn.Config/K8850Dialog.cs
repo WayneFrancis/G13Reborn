@@ -10,6 +10,9 @@ internal sealed class K8850Dialog : Form
     private readonly NumericUpDown _layer = new() { Minimum = 1, Maximum = 16, Value = 1 };
     private readonly ComboBox _tokens = new() { Width = 300, DropDownStyle = ComboBoxStyle.DropDown };
     private readonly ComboBox _category = new() { Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly FlowLayoutPanel _modifiers = new() { AutoSize = true };
+    private readonly CheckBox[] _modifierChecks = new[] { "Ctrl", "Shift", "Alt", "Win", "RCtrl", "RShift", "RAlt", "RWin" }
+        .Select(name => new CheckBox { Text = name, AutoSize = true }).ToArray();
     private readonly Button _capture = new() { Text = "Capture shortcut...", AutoSize = true };
     private static readonly string[] Media = { "Volume Up", "Volume Down", "Mute", "Play/Pause", "Next Track", "Previous Track", "Stop Media" };
     private static readonly string[] MouseActions = { "Left Click", "Right Click", "Middle Click", "Wheel Up", "Wheel Down" };
@@ -112,6 +115,13 @@ internal sealed class K8850Dialog : Form
         forget.Click += (_, _) => { _profile.Bindings.Remove(BindingKey); ShowBinding(); };
         editor.Controls.Add(forget);
         root.Controls.Add(editor);
+        _modifiers.Controls.Add(new Label { Text = "Modifiers:", AutoSize = true });
+        foreach (var check in _modifierChecks)
+        {
+            _modifiers.Controls.Add(check);
+            check.CheckedChanged += (_, _) => { if (!_loading) StoreEditorBinding(); };
+        }
+        root.Controls.Add(_modifiers);
         _category.SelectionChangeCommitted += (_, _) => {
             _loading = true;
             ConfigureEditor(_category.Text, "");
@@ -131,6 +141,11 @@ internal sealed class K8850Dialog : Form
         _layer.ValueChanged += (_, _) => ShowBinding();
         _tokens.TextChanged += (_, _) => {
             if (_loading || _category.Text == GamingCategory) return;
+            if (IsKeyboardCategory(_category.Text))
+            {
+                StoreEditorBinding();
+                return;
+            }
             if (string.IsNullOrWhiteSpace(_tokens.Text)) return;
             else
             {
@@ -148,6 +163,11 @@ internal sealed class K8850Dialog : Form
                 int index = Array.IndexOf(GamingLabels, value);
                 if (index < 0) return;
                 value = GamingKeys[index];
+            }
+            if (IsKeyboardCategory(_category.Text))
+            {
+                StoreEditorBinding();
+                return;
             }
             _profile.Bindings[BindingKey] = value;
             RefreshLabels();
@@ -190,18 +210,59 @@ internal sealed class K8850Dialog : Form
     {
         _loading = true;
         var value = _profile.Bindings.GetValueOrDefault(BindingKey, "");
+        var baseKey = SplitModifiers(value).Key;
         var category = Media.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Multimedia" :
             MouseActions.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Mouse" :
             value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase) ? "Advanced / hex" :
-            GamingKeys.Contains(value, StringComparer.OrdinalIgnoreCase) ? GamingCategory :
-            ExtendedKeyboard.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Extended keyboard" : "Keyboard";
+            GamingKeys.Contains(baseKey, StringComparer.OrdinalIgnoreCase) ? GamingCategory :
+            ExtendedKeyboard.Contains(baseKey, StringComparer.OrdinalIgnoreCase) ? "Extended keyboard" : "Keyboard";
         ConfigureEditor(category, value);
         _loading = false;
         RefreshLabels();
     }
+    private static bool IsKeyboardCategory(string category) =>
+        category is "Keyboard" or "Extended keyboard" or GamingCategory;
+
+    private static (string Key, string[] Modifiers) SplitModifiers(string value)
+    {
+        if (value.Contains(',')) return (value, Array.Empty<string>());
+        var parts = value.Split('+', StringSplitOptions.TrimEntries);
+        var known = new[] { "Ctrl", "Shift", "Alt", "Win", "RCtrl", "RShift", "RAlt", "RWin" };
+        if (parts.Length > 1 && parts.Take(parts.Length - 1).All(p => known.Contains(p, StringComparer.OrdinalIgnoreCase)))
+            return (parts[^1], parts[..^1]);
+        return (value, Array.Empty<string>());
+    }
+
+    private void StoreEditorBinding()
+    {
+        if (!IsKeyboardCategory(_category.Text)) return;
+        string key = _tokens.Text.Trim();
+        if (_category.Text == GamingCategory)
+        {
+            int index = _tokens.SelectedIndex;
+            if (index < 0) return;
+            key = GamingKeys[index];
+        }
+        if (key.Length == 0) return;
+        var modifiers = _modifierChecks.Where(c => c.Checked).Select(c => c.Text).ToArray();
+        if (modifiers.Length > 0 && (key.Contains('+') || key.Contains(',')))
+        {
+            _status.Text = "Use modifier checkboxes with a single key, or clear them to enter a shortcut or sequence.";
+            return;
+        }
+        _profile.Bindings[BindingKey] = string.Join("+", modifiers.Append(key));
+        RefreshLabels();
+    }
+
     private void ConfigureEditor(string category, string value)
     {
         _category.SelectedItem = category;
+        bool keyboard = IsKeyboardCategory(category);
+        var split = keyboard ? SplitModifiers(value) : (Key: value, Modifiers: Array.Empty<string>());
+        _modifiers.Enabled = keyboard;
+        foreach (var check in _modifierChecks)
+            check.Checked = split.Modifiers.Contains(check.Text, StringComparer.OrdinalIgnoreCase);
+        value = split.Key;
         _tokens.Items.Clear();
         bool fixedList = category is "Multimedia" or "Mouse" or GamingCategory;
         _tokens.DropDownStyle = fixedList ? ComboBoxStyle.DropDownList : ComboBoxStyle.DropDown;

@@ -79,8 +79,8 @@ internal static class K8850Binding
         if (p.Length == 1 && p[0] is >= 'A' and <= 'Z') return (byte)(4 + p[0] - 'A');
         if (p.Length == 1 && p[0] is >= '1' and <= '9') return (byte)(0x1e + p[0] - '1');
         if (p == "0") return 0x27;
-        if (p.StartsWith("F") && int.TryParse(p[1..], out int f) && f is >= 1 and <= 12)
-            return (byte)(0x3a + f - 1);
+        if (p.StartsWith("F") && int.TryParse(p[1..], out int f) && f is >= 1 and <= 24)
+            return (byte)(f <= 12 ? 0x3a + f - 1 : 0x68 + f - 13);
         return p switch { "ENTER" => 0x28, "ESC" or "ESCAPE" => 0x29, "BACKSPACE" => 0x2a,
             "TAB" => 0x2b, "SPACE" => 0x2c, "DELETE" => 0x4c, "HOME" => 0x4a, "END" => 0x4d,
             "PAGEUP" => 0x4b, "PAGEDOWN" => 0x4e, "RIGHT" => 0x4f, "LEFT" => 0x50,

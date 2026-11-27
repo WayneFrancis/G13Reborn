@@ -157,6 +157,13 @@ public sealed class MainForm : Form
             TextLabel("Profile"), _profiles, _addProfile, _deleteProfile,
             _saveProfile, _editMacros
         });
+        var macropad = new Button { Text = "K8850 Macropad...", AutoSize = true };
+        macropad.Click += (_, _) =>
+        {
+            using var dialog = new K8850Dialog();
+            dialog.ShowDialog(this);
+        };
+        profileBar.Controls.Add(macropad);
         root.Controls.Add(profileBar, 0, 0);
 
         var associationBar = new FlowLayoutPanel

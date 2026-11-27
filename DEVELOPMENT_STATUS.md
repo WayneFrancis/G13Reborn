@@ -185,3 +185,7 @@ User verified Minecraft ATM10 correctly detects every F13–F24 assignment (HID 
 ## Gaming category implementation
 
 Commit 1dfddfbb adds Gaming / Extended keys to K8850Dialog.cs. Fixed dropdown contains F13–F24, International 1–6 and Language 3–4; eight scancode labels reflect user tests. Selection stores canonical existing binding names, not annotated labels; existing matching profiles reopen in Gaming category. TextChanged ignores gaming dropdown labels; SelectionChangeCommitted maps label index to canonical name. Browsing category does not overwrite assignments. Existing Keyboard and Extended keyboard options retained; no protocol/parser changes. Capture disabled for gaming fixed list. Pending local build and regression tests: select each gaming entry, switch slots/categories, save/reopen profile, upload and confirm Minecraft action activation and restart persistence. No local compilation or hardware tests performed by assistant.
+
+## Gaming category user verification
+
+2026-11-27: User reported 'That all works' after the gaming category implementation and requested selection, slot switching and Minecraft upload checks. Treat the feature as user-tested successfully; no separate detailed per-case log, automated test run, or explicit game-restart/action-activation result supplied. Next priority: automated K8850 protocol and binding encoder regression tests, followed by remaining UI and hardware improvements.

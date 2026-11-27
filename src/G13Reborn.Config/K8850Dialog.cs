@@ -144,7 +144,7 @@ internal sealed class K8850Dialog : Form
         metadata.Controls.AddRange(new Control[] { new Label { Text = "Action label", AutoSize = true },
             _actionLabel, _copy, _paste, _swap });
         root.Controls.Add(metadata);
-        var minecraft = new FlowLayoutPanel { AutoSize = true };
+        var minecraft = new FlowLayoutPanel { AutoSize = true, MaximumSize = new Size(850, 0) };
         void AddMinecraft(string title, Action action)
         {
             var button = new Button { Text = title, AutoSize = true };
@@ -153,6 +153,8 @@ internal sealed class K8850Dialog : Form
         }
         AddMinecraft("Minecraft options...", SelectMinecraftOptions);
         AddMinecraft("Refresh Minecraft bindings", RefreshMinecraftBindings);
+        AddMinecraft("Browse Minecraft actions...", BrowseMinecraftActions);
+        AddMinecraft("Suggest action labels...", SuggestMinecraftLabels);
         AddMinecraft("Clear Minecraft link", () => {
             _store.MinecraftOptionsPath = null; _minecraftBindings = null; Save(); RefreshLabels();
             _status.Text = "Minecraft keybinding link cleared.";
@@ -251,7 +253,7 @@ internal sealed class K8850Dialog : Form
         _minecraftBindings = bindings;
         Save();
         RefreshLabels();
-        _status.Text = $"Loaded {bindings.Count} saved Minecraft bindings (read-only). Hover a configured action.";
+        _status.Text = $"Loaded {bindings.Count} saved Minecraft bindings; {bindings.TranslationCount} translated IDs; {bindings.UnreadableArchives} unreadable mod archives.";
     }
 
     private void RefreshMinecraftBindings()
@@ -265,7 +267,96 @@ internal sealed class K8850Dialog : Form
         RefreshLabels();
         _minecraftBindings = MinecraftBindings.Load(_store.MinecraftOptionsPath);
         RefreshLabels();
-        _status.Text = $"Loaded {_minecraftBindings.Count} saved Minecraft bindings (read-only). Hover a configured action.";
+        _status.Text = $"Loaded {_minecraftBindings.Count} saved Minecraft bindings; {_minecraftBindings.TranslationCount} translated IDs; {_minecraftBindings.UnreadableArchives} unreadable mod archives.";
+    }
+
+    private void BrowseMinecraftActions()
+    {
+        if (_minecraftBindings is not { } bindings)
+        {
+            MessageBox.Show(this, "Link the Minecraft instance options.txt first.");
+            return;
+        }
+        using var dialog = new Form { Text = "Minecraft saved actions", Size = new Size(1000, 620),
+            StartPosition = FormStartPosition.CenterParent };
+        var search = new TextBox { Width = 300, PlaceholderText = "Search action, key or ID" };
+        var conflicts = new CheckBox { Text = "Shared saved keys only", AutoSize = true };
+        var assigned = new CheckBox { Text = "On this macropad profile only", AutoSize = true };
+        var header = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 65, Padding = new Padding(5) };
+        header.Controls.AddRange(new Control[] { search, conflicts, assigned });
+        var grid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect };
+        foreach (var title in new[] { "Action", "Saved input", "Macropad slots", "Shared count", "Translation ID" })
+            grid.Columns.Add(title, title);
+        var slots = _profile.Bindings.Select(e => (e.Key, Signature: MinecraftBindings.GetSignature(e.Value)))
+            .Where(e => e.Signature != null)
+            .ToLookup(e => e.Signature!, e => e.Key, StringComparer.OrdinalIgnoreCase);
+        var entries = bindings.Entries.OrderBy(e => e.Description, StringComparer.OrdinalIgnoreCase).ToArray();
+        void Refresh()
+        {
+            grid.Rows.Clear();
+            string query = search.Text.Trim();
+            foreach (var entry in entries)
+            {
+                var addresses = string.Join(", ", slots[entry.Signature]);
+                if (conflicts.Checked && entry.SharedCount < 2 || assigned.Checked && addresses.Length == 0) continue;
+                if (query.Length != 0 && !new[] { entry.Description, entry.Input, entry.Id, addresses }
+                    .Any(s => s.Contains(query, StringComparison.OrdinalIgnoreCase))) continue;
+                grid.Rows.Add(entry.Description, entry.Input, addresses, entry.SharedCount, entry.Id);
+            }
+        }
+        search.TextChanged += (_, _) => Refresh();
+        conflicts.CheckedChanged += (_, _) => Refresh();
+        assigned.CheckedChanged += (_, _) => Refresh();
+        dialog.Controls.Add(grid);
+        dialog.Controls.Add(header);
+        Refresh();
+        dialog.ShowDialog(this);
+    }
+
+    private void SuggestMinecraftLabels()
+    {
+        if (_minecraftBindings is not { } bindings)
+        {
+            MessageBox.Show(this, "Link the Minecraft instance options.txt first.");
+            return;
+        }
+        var suggestions = new List<(string Key, string Label, string Binding)>();
+        foreach (var entry in _profile.Bindings)
+        {
+            if (!string.IsNullOrWhiteSpace(_profile.Labels.GetValueOrDefault(entry.Key))) continue;
+            var matches = bindings.Match(entry.Value);
+            if (matches.Count != 1) continue;
+            string description = bindings.Describe(matches[0]);
+            if (description == matches[0]) continue; // Do not replace a blank label with an unresolved identifier.
+            suggestions.Add((entry.Key, description.Length > 100 ? description[..100] : description, entry.Value));
+        }
+        if (suggestions.Count == 0)
+        {
+            MessageBox.Show(this, "No empty labels have a single translated Minecraft match.");
+            return;
+        }
+        using var dialog = new Form { Text = "Suggest Minecraft labels", Size = new Size(680, 500),
+            StartPosition = FormStartPosition.CenterParent };
+        var list = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
+        foreach (var item in suggestions)
+            list.Items.Add($"{item.Key} ({item.Binding}): {item.Label}", true);
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 45 };
+        var apply = new Button { Text = "Apply checked labels locally", AutoSize = true, DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
+        footer.Controls.AddRange(new Control[] { apply, cancel });
+        dialog.Controls.Add(list);
+        dialog.Controls.Add(footer);
+        dialog.CancelButton = cancel;
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        foreach (int index in list.CheckedIndices)
+        {
+            var item = suggestions[index];
+            _profile.Labels[item.Key] = item.Label;
+        }
+        ShowBinding();
+        _status.Text = $"Applied {list.CheckedIndices.Count} local labels. No hardware or Minecraft files changed.";
     }
 
     private void Save() => _store.Save();
@@ -669,7 +760,7 @@ internal sealed class K8850Dialog : Form
             var matches = value != null ? _minecraftBindings?.Match(value) : null;
             string tooltip = button.Text;
             if (matches is { Count: > 0 })
-                tooltip += "\n\nMinecraft saved bindings:\n" + string.Join("\n", matches);
+                tooltip += "\n\nMinecraft saved bindings:\n" + string.Join("\n", matches.Select(id => _minecraftBindings!.Describe(id)));
             _tooltips.SetToolTip(button, tooltip);
         }
         _copy.Enabled = _profile.Bindings.ContainsKey(BindingKey);

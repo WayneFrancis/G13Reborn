@@ -1,11 +1,69 @@
+using System.IO.Compression;
+using System.Text.Json;
+
 namespace G13Reborn.Config;
 
 internal sealed class MinecraftBindings
 {
     private readonly Dictionary<string, List<string>> _actions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _translations = new(StringComparer.Ordinal);
     public int Count { get; private set; }
+    public int TranslationCount => _translations.Count;
+    public int UnreadableArchives { get; private set; }
 
-    public static MinecraftBindings Load(string path) => Parse(File.ReadLines(path));
+    public sealed record ActionEntry(string Id, string Description, string Input, string Signature, int SharedCount);
+
+    public static MinecraftBindings Load(string path)
+    {
+        var result = Parse(File.ReadLines(path));
+        var mods = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, "mods");
+        if (Directory.Exists(mods))
+            result.LoadTranslations(Directory.EnumerateFiles(mods, "*.jar").OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
+        return result;
+    }
+
+    public string Describe(string id) => _translations.GetValueOrDefault(id, id);
+
+    public IEnumerable<ActionEntry> Entries => _actions.SelectMany(pair => pair.Value.Select(id =>
+        new ActionEntry(id, Describe(id), pair.Key.TrimEnd(':'), pair.Key, pair.Value.Count)));
+
+    public static string? GetSignature(string binding)
+    {
+        try { return Signature(K8850Binding.Encode(1, 1, binding)); }
+        catch { return null; }
+    }
+
+    public void LoadTranslations(IEnumerable<string> archives)
+    {
+        var wanted = _actions.Values.SelectMany(x => x).ToHashSet(StringComparer.Ordinal);
+        foreach (var path in archives)
+        {
+            try
+            {
+                using var zip = ZipFile.OpenRead(path);
+                foreach (var entry in zip.Entries)
+                {
+                    if (!entry.FullName.StartsWith("assets/", StringComparison.Ordinal) ||
+                        !entry.FullName.EndsWith("/lang/en_us.json", StringComparison.Ordinal) ||
+                        entry.Length > 4 * 1024 * 1024) continue;
+                    try
+                    {
+                        using var stream = entry.Open();
+                        using var json = JsonDocument.Parse(stream);
+                        if (json.RootElement.ValueKind != JsonValueKind.Object) continue;
+                        foreach (var property in json.RootElement.EnumerateObject())
+                            if (wanted.Contains(property.Name) && property.Value.ValueKind == JsonValueKind.String &&
+                                property.Value.GetString() is { } value && !string.IsNullOrWhiteSpace(value))
+                                _translations.TryAdd(property.Name, value);
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+                    { /* Ignore an unreadable individual language resource. */ }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            { UnreadableArchives++; }
+        }
+    }
 
     public static MinecraftBindings Parse(IEnumerable<string> lines)
     {
@@ -35,9 +93,7 @@ internal sealed class MinecraftBindings
 
     public IReadOnlyList<string> Match(string binding)
     {
-        string? signature;
-        try { signature = Signature(K8850Binding.Encode(1, 1, binding)); }
-        catch { return Array.Empty<string>(); }
+        string? signature = GetSignature(binding);
         return signature != null && _actions.TryGetValue(signature, out var actions)
             ? actions : Array.Empty<string>();
     }

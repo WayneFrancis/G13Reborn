@@ -197,3 +197,9 @@ Commits cdf3f6e and ea60013 add hardware-free K8850 tests to existing G13Reborn.
 ## Multimedia Minecraft compatibility observation
 
 User reports Previous Track and Next Track both appear as scancode.256 in Minecraft. Existing encoder uses distinct standard Consumer Page usages Previous 0xB6 and Next 0xB5, so no mapping collision is apparent in source. Actual firmware output and Windows media action behavior remain unverified; Minecraft/GLFW input translation is a possible cause, not confirmed. Test with a media player containing multiple tracks, or inspect Windows consumer input events, before changing protocol. Do not count these as independent Minecraft bindings. No production code changes.
+
+## Modifier checkbox UI and multimedia verification
+
+User confirmed Previous Track and Next Track both work correctly in Spotify, despite both appearing as scancode.256 in Minecraft. Keep distinct consumer usages unchanged; collision is game/input-path specific in observed tests.
+
+Commit e844d6b adds Ctrl, Shift, Alt, Win and right-side RCtrl/RShift/RAlt/RWin checkboxes to Keyboard, Extended keyboard and Gaming / Extended keys. Existing single-key chords are split into base key and modifier state when reopened; stored values remain canonical chord strings. Gaming scancode labels are not persisted. Raw hex, mouse and media categories disable modifiers. Manual shortcut/sequence text remains supported with checkboxes cleared; combining manual compound text with checked modifiers is rejected in the editor. Browsing categories resets editor controls without erasing stored binding. No protocol changes. Pending build and user tests: checkbox toggle, gaming key selection, slot switching, save/reopen, upload, actual modifier delivery and Minecraft chord recognition. Assistant has not compiled or hardware-tested this change; prior regression suite execution still not reported.

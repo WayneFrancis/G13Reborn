@@ -111,7 +111,10 @@ internal sealed class K8850Dialog : Form
         root.Controls.Add(layout);
         var selection = new FlowLayoutPanel { AutoSize = true };
         selection.Controls.AddRange(new Control[] { new Label { Text = "Slot", AutoSize = true }, _slot,
-            new Label { Text = "Layer", AutoSize = true }, _layer });
+            new Label { Text = "Edit layer", AutoSize = true }, _layer });
+        var layerHelp = new Button { Text = "Layer help / test...", AutoSize = true };
+        layerHelp.Click += (_, _) => ShowLayerHelp();
+        selection.Controls.Add(layerHelp);
         root.Controls.Add(selection);
         root.Controls.Add(new Label { Text = "Assignment (select an action or capture a keyboard shortcut)", AutoSize = true });
         var editor = new FlowLayoutPanel { AutoSize = true };
@@ -265,6 +268,19 @@ internal sealed class K8850Dialog : Form
         ReloadProfiles();
         _layer.Value = targetLayer;
         _status.Text = $"Created {profile.Bindings.Count} local gaming assignments. Review before uploading.";
+    }
+
+    private void ShowLayerHelp()
+    {
+        MessageBox.Show(this,
+            "Edit layer selects a programming target, not the active hardware layer. Only layer 1 is verified on this device.\r\n\r\n" +
+            "Three layers have been observed on related 4x4/3-knob hardware. Some models have a physical layer button; no software switching command has been verified.\r\n\r\n" +
+            "Manual test: export your profile first. Choose a known, easily restored slot on layer 1 and note its key. " +
+            "On layer 2, assign a different harmless letter to the same slot and upload only that selected binding. " +
+            "Return to Notepad and test the key. If there is a clearly marked layer control on the device, cycle it and test again. " +
+            "Do not assume a power or wireless mode switch changes layers. Restore your original mapping if needed. " +
+            "A successful USB write alone does not prove that layer 2 is stored or active.",
+            "Experimental hardware layers", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void ExportProfile()
@@ -512,7 +528,9 @@ internal sealed class K8850Dialog : Form
                 return K8850Binding.Encode(int.Parse(parts[1]), int.Parse(parts[0]), x.Value);
             }).ToArray();
             if (reports.Length == 0) return;
-            if (MessageBox.Show(this, $"Overwrite {reports.Length} configured binding(s)? Unknown slots will not be written.",
+            string layerWarning = reports.Any(r => r[3] != 1)
+                ? "\r\n\r\nIncludes unverified hardware layers. This does not switch the active layer." : "";
+            if (MessageBox.Show(this, $"Overwrite {reports.Length} configured binding(s)? Unknown slots will not be written." + layerWarning,
                 "Confirm hardware write", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             _busy = true;
             foreach (Control control in Controls) control.Enabled = false;

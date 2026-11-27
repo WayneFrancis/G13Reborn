@@ -10,7 +10,8 @@ internal sealed class K8850Dialog : Form
     private readonly NumericUpDown _layer = new() { Minimum = 1, Maximum = 3, Value = 1 };
     private readonly TextBox _layerName = new() { Width = 190, PlaceholderText = "Optional layer name", MaxLength = 60 };
     private readonly TextBox _actionLabel = new() { Width = 240, PlaceholderText = "Optional action label", MaxLength = 100 };
-    private readonly ToolTip _tooltips = new();
+    private readonly ToolTip _tooltips = new() { AutoPopDelay = 30000 };
+    private MinecraftBindings? _minecraftBindings;
     private (K8850Profile Profile, string Key, string Binding, string Label)? _copied;
     private readonly Button _copy = new() { Text = "Copy assignment", AutoSize = true };
     private readonly Button _paste = new() { Text = "Paste assignment", AutoSize = true };
@@ -143,6 +144,20 @@ internal sealed class K8850Dialog : Form
         metadata.Controls.AddRange(new Control[] { new Label { Text = "Action label", AutoSize = true },
             _actionLabel, _copy, _paste, _swap });
         root.Controls.Add(metadata);
+        var minecraft = new FlowLayoutPanel { AutoSize = true };
+        void AddMinecraft(string title, Action action)
+        {
+            var button = new Button { Text = title, AutoSize = true };
+            button.Click += (_, _) => { try { action(); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
+            minecraft.Controls.Add(button);
+        }
+        AddMinecraft("Minecraft options...", SelectMinecraftOptions);
+        AddMinecraft("Refresh Minecraft bindings", RefreshMinecraftBindings);
+        AddMinecraft("Clear Minecraft link", () => {
+            _store.MinecraftOptionsPath = null; _minecraftBindings = null; Save(); RefreshLabels();
+            _status.Text = "Minecraft keybinding link cleared.";
+        });
+        root.Controls.Add(minecraft);
         _layerName.TextChanged += (_, _) => {
             if (_loading) return;
             int layer = (int)_layer.Value;
@@ -217,6 +232,40 @@ internal sealed class K8850Dialog : Form
         _devices.SelectedIndexChanged += (_, _) => RefreshLabels();
         FormClosing += (_, e) => { if (_busy) { e.Cancel = true; return; } try { Save(); } catch (Exception ex) { e.Cancel = true; MessageBox.Show(this, ex.Message); } };
         RefreshDevices();
+        if (!string.IsNullOrWhiteSpace(_store.MinecraftOptionsPath))
+        {
+            try { RefreshMinecraftBindings(); }
+            catch (Exception ex) { _status.Text = "Minecraft options unavailable: " + ex.Message; }
+        }
+    }
+
+    private void SelectMinecraftOptions()
+    {
+        using var dialog = new OpenFileDialog { Filter = "Minecraft options (options.txt)|options.txt|Text files (*.txt)|*.txt",
+            FileName = "options.txt", CheckFileExists = true };
+        if (!string.IsNullOrWhiteSpace(_store.MinecraftOptionsPath))
+            dialog.InitialDirectory = Path.GetDirectoryName(_store.MinecraftOptionsPath);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var bindings = MinecraftBindings.Load(dialog.FileName);
+        _store.MinecraftOptionsPath = dialog.FileName;
+        _minecraftBindings = bindings;
+        Save();
+        RefreshLabels();
+        _status.Text = $"Loaded {bindings.Count} saved Minecraft bindings (read-only). Hover a configured action.";
+    }
+
+    private void RefreshMinecraftBindings()
+    {
+        if (string.IsNullOrWhiteSpace(_store.MinecraftOptionsPath))
+        {
+            SelectMinecraftOptions();
+            return;
+        }
+        _minecraftBindings = null;
+        RefreshLabels();
+        _minecraftBindings = MinecraftBindings.Load(_store.MinecraftOptionsPath);
+        RefreshLabels();
+        _status.Text = $"Loaded {_minecraftBindings.Count} saved Minecraft bindings (read-only). Hover a configured action.";
     }
 
     private void Save() => _store.Save();
@@ -617,7 +666,11 @@ internal sealed class K8850Dialog : Form
             string assignment = _profile.Bindings.TryGetValue(key, out var value)
                 ? value + (Changed(key, value) ? " *" : " [sent]") : "Unknown";
             button.Text = label + "\n" + (string.IsNullOrWhiteSpace(custom) ? assignment : custom + "\n" + assignment);
-            _tooltips.SetToolTip(button, button.Text);
+            var matches = value != null ? _minecraftBindings?.Match(value) : null;
+            string tooltip = button.Text;
+            if (matches is { Count: > 0 })
+                tooltip += "\n\nMinecraft saved bindings:\n" + string.Join("\n", matches);
+            _tooltips.SetToolTip(button, tooltip);
         }
         _copy.Enabled = _profile.Bindings.ContainsKey(BindingKey);
         _paste.Enabled = _copied.HasValue;

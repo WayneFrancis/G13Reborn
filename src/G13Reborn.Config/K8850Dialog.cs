@@ -8,7 +8,15 @@ internal sealed class K8850Dialog : Form
     private readonly Label _status = new() { AutoSize = true, MaximumSize = new Size(570, 0) };
     private readonly NumericUpDown _slot = new() { Minimum = 1, Maximum = 25, Value = 1 };
     private readonly NumericUpDown _layer = new() { Minimum = 1, Maximum = 16, Value = 1 };
-    private readonly TextBox _tokens = new() { Width = 300, PlaceholderText = "Unknown / not configured" };
+    private readonly ComboBox _tokens = new() { Width = 300, DropDownStyle = ComboBoxStyle.DropDown };
+    private readonly ComboBox _category = new() { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Button _capture = new() { Text = "Capture shortcut...", AutoSize = true };
+    private static readonly string[] Media = { "Volume Up", "Volume Down", "Mute", "Play/Pause", "Next Track", "Previous Track", "Stop Media" };
+    private static readonly string[] MouseActions = { "Left Click", "Right Click", "Middle Click", "Wheel Up", "Wheel Down" };
+    private static readonly string[] Keyboard = Enumerable.Range(0, 26).Select(i => ((char)('A' + i)).ToString())
+        .Concat(Enumerable.Range(0, 10).Select(i => i.ToString()))
+        .Concat(Enumerable.Range(1, 12).Select(i => $"F{i}"))
+        .Concat(new[] { "Enter", "Escape", "Backspace", "Tab", "Space", "Delete", "Home", "End", "PageUp", "PageDown", "Left", "Right", "Up", "Down", "Ctrl+C", "Ctrl+V", "Ctrl+X", "Ctrl+Z", "Ctrl+A", "Ctrl+S" }).ToArray();
     private readonly Button _upload = new() { Text = "Upload selected binding", AutoSize = true };
     private readonly Button _refresh = new() { Text = "Refresh devices", AutoSize = true };
     private bool _busy, _loading;
@@ -81,8 +89,21 @@ internal sealed class K8850Dialog : Form
         selection.Controls.AddRange(new Control[] { new Label { Text = "Slot", AutoSize = true }, _slot,
             new Label { Text = "Layer", AutoSize = true }, _layer });
         root.Controls.Add(selection);
-        root.Controls.Add(new Label { Text = "Assignment: Ctrl+C, A, Volume Up, Left Click, Wheel Down, or hex: F1 06", AutoSize = true });
-        root.Controls.Add(_tokens);
+        root.Controls.Add(new Label { Text = "Assignment (select an action or capture a keyboard shortcut)", AutoSize = true });
+        var editor = new FlowLayoutPanel { AutoSize = true };
+        _category.Items.AddRange(new object[] { "Keyboard", "Multimedia", "Mouse", "Advanced / hex" });
+        editor.Controls.AddRange(new Control[] { _category, _tokens, _capture });
+        var forget = new Button { Text = "Forget local assignment", AutoSize = true };
+        forget.Click += (_, _) => { _profile.Bindings.Remove(BindingKey); ShowBinding(); };
+        editor.Controls.Add(forget);
+        root.Controls.Add(editor);
+        _category.SelectionChangeCommitted += (_, _) => {
+            _loading = true;
+            ConfigureEditor(_category.Text, "");
+            _loading = false;
+            // Browsing categories does not erase the existing binding.
+        };
+        _capture.Click += (_, _) => CaptureShortcut();
         var uploads = new FlowLayoutPanel { AutoSize = true };
         uploads.Controls.AddRange(new Control[] { _upload, _modified, _all });
         root.Controls.Add(uploads);
@@ -95,8 +116,13 @@ internal sealed class K8850Dialog : Form
         _layer.ValueChanged += (_, _) => ShowBinding();
         _tokens.TextChanged += (_, _) => {
             if (_loading) return;
-            if (string.IsNullOrWhiteSpace(_tokens.Text)) _profile.Bindings.Remove(BindingKey);
+            if (string.IsNullOrWhiteSpace(_tokens.Text)) return;
             else _profile.Bindings[BindingKey] = _tokens.Text.Trim();
+            RefreshLabels();
+        };
+        _tokens.SelectionChangeCommitted += (_, _) => {
+            if (_loading || _tokens.SelectedItem is not string value) return;
+            _profile.Bindings[BindingKey] = value;
             RefreshLabels();
         };
         _profiles.SelectedIndexChanged += (_, _) => {
@@ -136,10 +162,59 @@ internal sealed class K8850Dialog : Form
     private void ShowBinding()
     {
         _loading = true;
-        _tokens.Text = _profile.Bindings.GetValueOrDefault(BindingKey, "");
+        var value = _profile.Bindings.GetValueOrDefault(BindingKey, "");
+        var category = Media.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Multimedia" :
+            MouseActions.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Mouse" :
+            value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase) ? "Advanced / hex" : "Keyboard";
+        ConfigureEditor(category, value);
         _loading = false;
         RefreshLabels();
     }
+    private void ConfigureEditor(string category, string value)
+    {
+        _category.SelectedItem = category;
+        _tokens.Items.Clear();
+        bool fixedList = category is "Multimedia" or "Mouse";
+        _tokens.DropDownStyle = fixedList ? ComboBoxStyle.DropDownList : ComboBoxStyle.DropDown;
+        _tokens.Items.AddRange(category switch {
+            "Multimedia" => Media, "Mouse" => MouseActions, "Keyboard" => Keyboard, _ => Array.Empty<string>()
+        });
+        if (fixedList)
+            _tokens.SelectedIndex = Array.FindIndex(category == "Multimedia" ? Media : MouseActions,
+                x => x.Equals(value, StringComparison.OrdinalIgnoreCase));
+        else _tokens.Text = value;
+        _capture.Enabled = category == "Keyboard";
+    }
+
+    private void CaptureShortcut()
+    {
+        using var dialog = new Form { Text = "Capture keyboard shortcut", Size = new Size(420, 150),
+            StartPosition = FormStartPosition.CenterParent, KeyPreview = true };
+        dialog.Controls.Add(new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
+            Text = "Press a key or shortcut. Close this window to cancel." });
+        string? captured = null;
+        dialog.KeyDown += (_, e) => {
+            e.Handled = e.SuppressKeyPress = true;
+            if (e.KeyCode is Keys.ControlKey or Keys.ShiftKey or Keys.Menu or Keys.LWin or Keys.RWin) return;
+            string key = e.KeyCode switch {
+                >= Keys.D0 and <= Keys.D9 => ((int)e.KeyCode - (int)Keys.D0).ToString(),
+                Keys.Return => "Enter", Keys.Prior => "PageUp", Keys.Next => "PageDown",
+                _ => e.KeyCode.ToString()
+            };
+            var chord = (e.Control ? "Ctrl+" : "") + (e.Shift ? "Shift+" : "") +
+                (e.Alt ? "Alt+" : "") + key;
+            try { K8850Binding.Encode((int)_slot.Value, (int)_layer.Value, chord); }
+            catch (Exception ex) { MessageBox.Show(dialog, ex.Message); return; }
+            captured = chord;
+            dialog.DialogResult = DialogResult.OK;
+        };
+        if (dialog.ShowDialog(this) == DialogResult.OK && captured != null)
+        {
+            _profile.Bindings[BindingKey] = captured;
+            ShowBinding();
+        }
+    }
+
     private void RefreshLabels()
     {
         foreach (var (slot, button) in _buttons)

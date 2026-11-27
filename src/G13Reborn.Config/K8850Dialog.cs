@@ -82,6 +82,7 @@ internal sealed class K8850Dialog : Form
             _store.Profiles.Remove(_profile); _store.Active = _store.Profiles[0].Name; Save(); ReloadProfiles();
         });
         Add("Save", Save);
+        Add("Validate profile...", ValidateProfile);
         Add("Generate gaming profile...", GenerateGamingProfile);
         root.Controls.Add(profiles);
         root.Controls.Add(_devices);
@@ -261,6 +262,57 @@ internal sealed class K8850Dialog : Form
         ReloadProfiles();
         _layer.Value = targetLayer;
         _status.Text = $"Created {profile.Bindings.Count} local gaming assignments. Review before uploading.";
+    }
+
+    private void ValidateProfile()
+    {
+        var issues = new List<string>();
+        var packets = new Dictionary<string, List<string>>();
+        var gaming = new Dictionary<string, List<string>>();
+        foreach (var entry in _profile.Bindings)
+        {
+            try
+            {
+                var parts = entry.Key.Split(':');
+                if (parts.Length != 2) throw new FormatException("Invalid layer:slot identifier.");
+                int layer = int.Parse(parts[0]), slot = int.Parse(parts[1]);
+                var report = K8850Binding.Encode(slot, layer, entry.Value);
+                string label = $"Layer {layer}, slot {slot}: {entry.Value}";
+                report[2] = 0; // Ignore slot, but keep layer and action bytes.
+                string signature = Convert.ToHexString(report);
+                if (!packets.TryGetValue(signature, out var matches))
+                    packets[signature] = matches = new();
+                matches.Add(label);
+                // Observed Minecraft aliases, not general Windows equivalence.
+                if (report[4] == 1 && report[6] == 1 && report[9] is 0x73 or 0x94)
+                {
+                    string alias = $"{layer}:F24";
+                    if (!gaming.TryGetValue(alias, out var aliases)) gaming[alias] = aliases = new();
+                    aliases.Add(label);
+                }
+                if (report[4] == 2 && report[9] is 0xb5 or 0xb6 && report[12] == 0)
+                {
+                    string alias = $"{layer}:MediaTrack";
+                    if (!gaming.TryGetValue(alias, out var aliases)) gaming[alias] = aliases = new();
+                    aliases.Add(label);
+                }
+            }
+            catch (Exception ex) { issues.Add($"Invalid {entry.Key}: {entry.Value} — {ex.Message}"); }
+        }
+        foreach (var matches in packets.Values.Where(v => v.Count > 1))
+            issues.Add("Duplicate encoded assignment: " + string.Join("; ", matches));
+        foreach (var matches in gaming.Values.Where(v => v.Count > 1))
+            issues.Add("Possible Minecraft input collision: " + string.Join("; ", matches));
+        using var dialog = new Form { Text = "Profile validation", Size = new Size(720, 460),
+            StartPosition = FormStartPosition.CenterParent };
+        var output = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical, WordWrap = true,
+            Text = $"Profile: {_profile.Name}\\r\\nConfigured assignments: {_profile.Bindings.Count}\\r\\n" +
+                (issues.Count == 0 ? "No encoding errors or known duplicate assignments found." :
+                    string.Join("\\r\\n\\r\\n", issues)) +
+                "\\r\\n\\r\\nValidation is local only. Unknown hardware slots and game-specific modifier conflicts cannot be checked." };
+        dialog.Controls.Add(output);
+        dialog.ShowDialog(this);
     }
 
     private void ReloadProfiles()

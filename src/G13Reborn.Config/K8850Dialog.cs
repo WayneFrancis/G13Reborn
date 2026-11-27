@@ -81,6 +81,7 @@ internal sealed class K8850Dialog : Form
             _store.Profiles.Remove(_profile); _store.Active = _store.Profiles[0].Name; Save(); ReloadProfiles();
         });
         Add("Save", Save);
+        Add("Generate gaming profile...", GenerateGamingProfile);
         root.Controls.Add(profiles);
         root.Controls.Add(_devices);
         root.Controls.Add(_refresh);
@@ -195,6 +196,72 @@ internal sealed class K8850Dialog : Form
         var p = new K8850Profile { Name = NewName(), Bindings = clone ? new(_profile.Bindings) : new() };
         _store.Profiles.Add(p); _store.Active = p.Name; Save(); ReloadProfiles();
     }
+    private void GenerateGamingProfile()
+    {
+        using var dialog = new Form { Text = "Generate gaming profile", Size = new Size(530, 430),
+            StartPosition = FormStartPosition.CenterParent };
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+            WrapContents = false, AutoScroll = true, Padding = new Padding(12) };
+        dialog.Controls.Add(panel);
+        var name = new TextBox { Width = 300, Text = string.IsNullOrWhiteSpace(_name.Text) ? "Gaming" : _name.Text.Trim() };
+        var layer = new NumericUpDown { Minimum = 1, Maximum = 16, Value = _layer.Value };
+        panel.Controls.Add(new Label { Text = "New profile name", AutoSize = true });
+        panel.Controls.Add(name);
+        panel.Controls.Add(new Label { Text = "Target layer", AutoSize = true });
+        panel.Controls.Add(layer);
+        panel.Controls.Add(new Label { Text = "Choose one optional modifier for five additional encoder actions:", AutoSize = true });
+        var choices = new[] { "Ctrl", "Shift", "Alt", "Win", "RCtrl", "RShift", "RAlt", "RWin" }
+            .Select(m => new CheckBox { Text = m, AutoSize = true }).ToArray();
+        var row = new FlowLayoutPanel { Width = 460, AutoSize = true };
+        row.Controls.AddRange(choices);
+        panel.Controls.Add(row);
+        var preview = new Label { AutoSize = true, MaximumSize = new Size(460, 0) };
+        panel.Controls.Add(preview);
+        string? Modifier() => choices.FirstOrDefault(c => c.Checked)?.Text;
+        void Preview() => preview.Text = "K1–K12: F13–F24\\nK13–K16: International 1–4\\n" +
+            "R1 CCW / Press / CW: International 5 / 6 / Language 3\\nR2 CCW: Language 4\\n" +
+            (Modifier() is string m ? $"Remaining five actions: {m}+F13 through {m}+F17 (game chord support not guaranteed)." :
+                "Remaining five actions: unknown / not written.") +
+            "\\nCreates a new local profile only. Existing profiles and hardware are unchanged.";
+        foreach (var choice in choices) choice.CheckedChanged += (_, _) => {
+            if (choice.Checked)
+                foreach (var other in choices.Where(c => c != choice)) other.Checked = false;
+            Preview();
+        };
+        Preview();
+        var create = new Button { Text = "Create local profile", AutoSize = true };
+        var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
+        panel.Controls.Add(create);
+        panel.Controls.Add(cancel);
+        dialog.CancelButton = cancel;
+        create.Click += (_, _) =>
+        {
+            string title = name.Text.Trim();
+            if (title.Length == 0 || _store.Profiles.Any(p => p.Name.Equals(title, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show(dialog, "Enter a unique profile name.");
+                return;
+            }
+            dialog.DialogResult = DialogResult.OK;
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var profile = new K8850Profile { Name = name.Text.Trim() };
+        int targetLayer = (int)layer.Value;
+        for (int i = 0; i < GamingKeys.Length; i++)
+            profile.Bindings[$"{targetLayer}:{i + 1}"] = GamingKeys[i];
+        if (Modifier() is string modifier)
+            for (int i = 0; i < 5; i++)
+                profile.Bindings[$"{targetLayer}:{21 + i}"] = $"{modifier}+F{13 + i}";
+        foreach (var entry in profile.Bindings)
+            K8850Binding.Encode(int.Parse(entry.Key.Split(':')[1]), targetLayer, entry.Value);
+        _store.Profiles.Add(profile);
+        _store.Active = profile.Name;
+        Save();
+        ReloadProfiles();
+        _layer.Value = targetLayer;
+        _status.Text = $"Created {profile.Bindings.Count} local gaming assignments. Review before uploading.";
+    }
+
     private void ReloadProfiles()
     {
         _loading = true;

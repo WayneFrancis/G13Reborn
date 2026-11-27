@@ -9,7 +9,7 @@ internal sealed class K8850Dialog : Form
     private readonly NumericUpDown _slot = new() { Minimum = 1, Maximum = 25, Value = 1 };
     private readonly NumericUpDown _layer = new() { Minimum = 1, Maximum = 16, Value = 1 };
     private readonly ComboBox _tokens = new() { Width = 300, DropDownStyle = ComboBoxStyle.DropDown };
-    private readonly ComboBox _category = new() { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ComboBox _category = new() { Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Button _capture = new() { Text = "Capture shortcut...", AutoSize = true };
     private static readonly string[] Media = { "Volume Up", "Volume Down", "Mute", "Play/Pause", "Next Track", "Previous Track", "Stop Media" };
     private static readonly string[] MouseActions = { "Left Click", "Right Click", "Middle Click", "Wheel Up", "Wheel Down" };
@@ -17,6 +17,14 @@ internal sealed class K8850Dialog : Form
         .Concat(Enumerable.Range(0, 10).Select(i => i.ToString()))
         .Concat(Enumerable.Range(1, 24).Select(i => $"F{i}"))
         .Concat(new[] { "Enter", "Escape", "Backspace", "Tab", "Space", "Delete", "Home", "End", "PageUp", "PageDown", "Left", "Right", "Up", "Down", "Ctrl+C", "Ctrl+V", "Ctrl+X", "Ctrl+Z", "Ctrl+A", "Ctrl+S" }).ToArray();
+    private static readonly string[] ExtendedKeyboard = Enumerable.Range(13, 12).Select(i => $"F{i}")
+        .Concat(Enumerable.Range(0, 10).Select(i => $"Numpad {i}"))
+        .Concat(new[] { "Numpad Divide", "Numpad Multiply", "Numpad Subtract", "Numpad Add",
+            "Numpad Enter", "Numpad Decimal", "Numpad Equals", "Num Lock", "Print Screen",
+            "Scroll Lock", "Pause", "Insert", "Non-US Backslash", "Application/Menu",
+            "Execute", "Help", "Menu", "Select", "Stop", "Again", "Undo", "Cut", "Copy", "Paste", "Find" })
+        .Concat(Enumerable.Range(1, 9).Select(i => $"International {i}"))
+        .Concat(Enumerable.Range(1, 9).Select(i => $"Language {i}")).ToArray();
     private readonly Button _upload = new() { Text = "Upload selected binding", AutoSize = true };
     private readonly Button _refresh = new() { Text = "Refresh devices", AutoSize = true };
     private bool _busy, _loading;
@@ -91,7 +99,7 @@ internal sealed class K8850Dialog : Form
         root.Controls.Add(selection);
         root.Controls.Add(new Label { Text = "Assignment (select an action or capture a keyboard shortcut)", AutoSize = true });
         var editor = new FlowLayoutPanel { AutoSize = true };
-        _category.Items.AddRange(new object[] { "Keyboard", "Multimedia", "Mouse", "Advanced / hex" });
+        _category.Items.AddRange(new object[] { "Keyboard", "Extended keyboard", "Multimedia", "Mouse", "Advanced / hex" });
         editor.Controls.AddRange(new Control[] { _category, _tokens, _capture });
         var forget = new Button { Text = "Forget local assignment", AutoSize = true };
         forget.Click += (_, _) => { _profile.Bindings.Remove(BindingKey); ShowBinding(); };
@@ -171,7 +179,8 @@ internal sealed class K8850Dialog : Form
         var value = _profile.Bindings.GetValueOrDefault(BindingKey, "");
         var category = Media.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Multimedia" :
             MouseActions.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Mouse" :
-            value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase) ? "Advanced / hex" : "Keyboard";
+            value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase) ? "Advanced / hex" :
+            ExtendedKeyboard.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Extended keyboard" : "Keyboard";
         ConfigureEditor(category, value);
         _loading = false;
         RefreshLabels();
@@ -183,14 +192,14 @@ internal sealed class K8850Dialog : Form
         bool fixedList = category is "Multimedia" or "Mouse";
         _tokens.DropDownStyle = fixedList ? ComboBoxStyle.DropDownList : ComboBoxStyle.DropDown;
         _tokens.Items.AddRange(category switch {
-            "Multimedia" => Media, "Mouse" => MouseActions, "Keyboard" => Keyboard, _ => Array.Empty<string>()
+            "Multimedia" => Media, "Mouse" => MouseActions, "Keyboard" => Keyboard, "Extended keyboard" => ExtendedKeyboard, _ => Array.Empty<string>()
         });
         if (fixedList)
             _tokens.SelectedIndex = Array.FindIndex(category == "Multimedia" ? Media : MouseActions,
                 x => x.Equals(value, StringComparison.OrdinalIgnoreCase));
         else _tokens.Text = category == "Advanced / hex" && value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase)
             ? value[4..].Trim() : value;
-        _capture.Enabled = category == "Keyboard";
+        _capture.Enabled = category is "Keyboard" or "Extended keyboard";
     }
 
     private void CaptureShortcut()

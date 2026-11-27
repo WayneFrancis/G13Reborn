@@ -83,6 +83,8 @@ internal sealed class K8850Dialog : Form
         });
         Add("Save", Save);
         Add("Validate profile...", ValidateProfile);
+        Add("Export profile...", ExportProfile);
+        Add("Import profile...", ImportProfile);
         Add("Generate gaming profile...", GenerateGamingProfile);
         root.Controls.Add(profiles);
         root.Controls.Add(_devices);
@@ -262,6 +264,45 @@ internal sealed class K8850Dialog : Form
         ReloadProfiles();
         _layer.Value = targetLayer;
         _status.Text = $"Created {profile.Bindings.Count} local gaming assignments. Review before uploading.";
+    }
+
+    private void ExportProfile()
+    {
+        using var dialog = new SaveFileDialog { Filter = "K8850 profile (*.json)|*.json", DefaultExt = "json",
+            AddExtension = true, FileName = "k8850-profile.json" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        File.WriteAllText(dialog.FileName, System.Text.Json.JsonSerializer.Serialize(_profile,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        _status.Text = "Exported local profile.";
+    }
+
+    private void ImportProfile()
+    {
+        using var dialog = new OpenFileDialog { Filter = "K8850 profile (*.json)|*.json", CheckFileExists = true };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var profile = System.Text.Json.JsonSerializer.Deserialize<K8850Profile>(File.ReadAllText(dialog.FileName))
+            ?? throw new InvalidDataException("Invalid profile file.");
+        if (string.IsNullOrWhiteSpace(profile.Name) || profile.Bindings == null)
+            throw new InvalidDataException("Profile name or bindings missing.");
+        foreach (var entry in profile.Bindings)
+        {
+            var parts = entry.Key.Split(':');
+            if (parts.Length != 2) throw new FormatException("Invalid layer:slot identifier.");
+            int layer = int.Parse(parts[0]), slot = int.Parse(parts[1]);
+            if (entry.Key != $"{layer}:{slot}") throw new FormatException("Noncanonical layer:slot identifier.");
+            K8850Binding.Encode(slot, layer, entry.Value);
+        }
+        string original = profile.Name.Trim();
+        profile.Name = original;
+        for (int i = 2; _store.Profiles.Any(p => p.Name.Equals(profile.Name, StringComparison.OrdinalIgnoreCase)); i++)
+            profile.Name = $"{original} ({i})";
+        if (MessageBox.Show(this, $"Import {profile.Bindings.Count} assignments as '{profile.Name}'? No hardware will be written.",
+            "Import profile", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+        _store.Profiles.Add(profile);
+        _store.Active = profile.Name;
+        Save();
+        ReloadProfiles();
+        _status.Text = "Imported local profile. Review before uploading.";
     }
 
     private void ValidateProfile()

@@ -189,3 +189,7 @@ Commit 1dfddfbb adds Gaming / Extended keys to K8850Dialog.cs. Fixed dropdown co
 ## Gaming category user verification
 
 2026-11-27: User reported 'That all works' after the gaming category implementation and requested selection, slot switching and Minecraft upload checks. Treat the feature as user-tested successfully; no separate detailed per-case log, automated test run, or explicit game-restart/action-activation result supplied. Next priority: automated K8850 protocol and binding encoder regression tests, followed by remaining UI and hardware improvements.
+
+## K8850 automated regression coverage
+
+Commits cdf3f6e and ea60013 add hardware-free K8850 tests to existing G13Reborn.SmokeTests. The test project links the actual K8850Profiles.cs source to exercise the internal binding encoder without referencing the WinForms executable. Tests cover exact 64-byte packets and zero padding, finish, button/knob slots, modifier chords, multimedia including high-byte usage, mouse buttons/wheel, F1–F24, International/Language 1–9, hex equivalence, sequences, maximum tokens and rejection of invalid arguments. These test protocol encoding, not Windows recognition or hardware delivery. Run `dotnet run --project tests/G13Reborn.SmokeTests`. Compilation and execution pending user verification; assistant has not run them. No production behavior changed. Next: gaming profile generator after test verification.

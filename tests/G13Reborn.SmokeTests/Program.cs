@@ -1574,3 +1574,25 @@ K8850Reject<FormatException>(() => K8850Binding.Encode(1,1,"F25"), "K8850 invali
 K8850Reject<FormatException>(() => K8850Binding.Encode(1,1,"A+B"), "K8850 invalid chord");
 K8850Reject<ArgumentException>(() => K8850Protocol.Mouse(1,1,buttons:1,wheel:1), "K8850 mixed mouse actions");
 Console.WriteLine("K8850 protocol and binding regression tests passed.");
+
+var minecraftOptionsSample = MinecraftBindings.Parse(new[] {
+    "key_key.example.hover:key.keyboard.f13",
+    "key_key.example.second:key.keyboard.f13:NONE",
+    "key_key.example.modified:key.keyboard.f13:CONTROL",
+    "key_key.example.international:scancode.115",
+    "key_key.example.language:key.scancode.120",
+    "key_key.example.unbound:key.keyboard.unknown",
+    "key_key.example.media:scancode.256",
+    "key_key.example.click:key.mouse.left",
+    "fov:0.5"
+});
+Check(minecraftOptionsSample.Count == 7, "Minecraft options parsing count");
+Check(minecraftOptionsSample.Match("F13").Count == 2, "Minecraft duplicate actions preserved");
+Check(minecraftOptionsSample.Match("hex: 68").SequenceEqual(minecraftOptionsSample.Match("F13")), "Minecraft raw HID equivalence");
+Check(minecraftOptionsSample.Match("Ctrl+F13").Single() == "key.example.modified", "Minecraft modifier match");
+Check(minecraftOptionsSample.Match("International 1").Single() == "key.example.international", "Minecraft international scancode");
+Check(minecraftOptionsSample.Match("Language 3").Single() == "key.example.language", "Minecraft alternate scancode prefix");
+Check(minecraftOptionsSample.Match("Next Track").SequenceEqual(minecraftOptionsSample.Match("Previous Track")), "Minecraft observed media collision");
+Check(minecraftOptionsSample.Match("Left Click").Single() == "key.example.click", "Minecraft mouse match");
+Check(minecraftOptionsSample.Match("Ctrl+Shift+F13").Count == 0 && minecraftOptionsSample.Match("A,B").Count == 0, "Minecraft no speculative multi-modifier or sequence matching");
+Console.WriteLine("Minecraft options keybinding matcher tests passed.");

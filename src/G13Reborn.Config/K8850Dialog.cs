@@ -15,7 +15,7 @@ internal sealed class K8850Dialog : Form
     private static readonly string[] MouseActions = { "Left Click", "Right Click", "Middle Click", "Wheel Up", "Wheel Down" };
     private static readonly string[] Keyboard = Enumerable.Range(0, 26).Select(i => ((char)('A' + i)).ToString())
         .Concat(Enumerable.Range(0, 10).Select(i => i.ToString()))
-        .Concat(Enumerable.Range(1, 12).Select(i => $"F{i}"))
+        .Concat(Enumerable.Range(1, 24).Select(i => $"F{i}"))
         .Concat(new[] { "Enter", "Escape", "Backspace", "Tab", "Space", "Delete", "Home", "End", "PageUp", "PageDown", "Left", "Right", "Up", "Down", "Ctrl+C", "Ctrl+V", "Ctrl+X", "Ctrl+Z", "Ctrl+A", "Ctrl+S" }).ToArray();
     private readonly Button _upload = new() { Text = "Upload selected binding", AutoSize = true };
     private readonly Button _refresh = new() { Text = "Refresh devices", AutoSize = true };
@@ -117,7 +117,13 @@ internal sealed class K8850Dialog : Form
         _tokens.TextChanged += (_, _) => {
             if (_loading) return;
             if (string.IsNullOrWhiteSpace(_tokens.Text)) return;
-            else _profile.Bindings[BindingKey] = _tokens.Text.Trim();
+            else
+            {
+                var value = _tokens.Text.Trim();
+                if (_category.Text == "Advanced / hex" && !value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase))
+                    value = "hex: " + value;
+                _profile.Bindings[BindingKey] = value;
+            }
             RefreshLabels();
         };
         _tokens.SelectionChangeCommitted += (_, _) => {
@@ -182,7 +188,8 @@ internal sealed class K8850Dialog : Form
         if (fixedList)
             _tokens.SelectedIndex = Array.FindIndex(category == "Multimedia" ? Media : MouseActions,
                 x => x.Equals(value, StringComparison.OrdinalIgnoreCase));
-        else _tokens.Text = value;
+        else _tokens.Text = category == "Advanced / hex" && value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase)
+            ? value[4..].Trim() : value;
         _capture.Enabled = category == "Keyboard";
     }
 

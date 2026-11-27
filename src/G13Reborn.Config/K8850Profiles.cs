@@ -7,6 +7,8 @@ internal sealed class K8850Profile
 {
     public string Name { get; set; } = "Default";
     public Dictionary<string, string> Bindings { get; set; } = new();
+    public Dictionary<int, string> LayerNames { get; set; } = new();
+    public Dictionary<string, string> Labels { get; set; } = new();
 }
 
 internal sealed class K8850Profiles

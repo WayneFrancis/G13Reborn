@@ -7,7 +7,7 @@ internal sealed class K8850Dialog : Form
     private readonly ComboBox _devices = new() { Width = 530, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _status = new() { AutoSize = true, MaximumSize = new Size(570, 0) };
     private readonly NumericUpDown _slot = new() { Minimum = 1, Maximum = 25, Value = 1 };
-    private readonly NumericUpDown _layer = new() { Minimum = 1, Maximum = 16, Value = 1 };
+    private readonly NumericUpDown _layer = new() { Minimum = 1, Maximum = 3, Value = 1 };
     private readonly ComboBox _tokens = new() { Width = 300, DropDownStyle = ComboBoxStyle.DropDown };
     private readonly ComboBox _category = new() { Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly FlowLayoutPanel _modifiers = new() { AutoSize = true };
@@ -212,7 +212,7 @@ internal sealed class K8850Dialog : Form
             WrapContents = false, AutoScroll = true, Padding = new Padding(12) };
         dialog.Controls.Add(panel);
         var name = new TextBox { Width = 300, Text = string.IsNullOrWhiteSpace(_name.Text) ? "Gaming" : _name.Text.Trim() };
-        var layer = new NumericUpDown { Minimum = 1, Maximum = 16, Value = _layer.Value };
+        var layer = new NumericUpDown { Minimum = 1, Maximum = 3, Value = _layer.Value };
         panel.Controls.Add(new Label { Text = "New profile name", AutoSize = true });
         panel.Controls.Add(name);
         panel.Controls.Add(new Label { Text = "Target layer", AutoSize = true });
@@ -273,14 +273,12 @@ internal sealed class K8850Dialog : Form
     private void ShowLayerHelp()
     {
         MessageBox.Show(this,
-            "Edit layer selects a programming target, not the active hardware layer. Only layer 1 is verified on this device.\r\n\r\n" +
-            "Three layers have been observed on related 4x4/3-knob hardware. Some models have a physical layer button; no software switching command has been verified.\r\n\r\n" +
-            "Manual test: export your profile first. Choose a known, easily restored slot on layer 1 and note its key. " +
-            "On layer 2, assign a different harmless letter to the same slot and upload only that selected binding. " +
-            "Return to Notepad and test the key. If there is a clearly marked layer control on the device, cycle it and test again. " +
-            "Do not assume a power or wireless mode switch changes layers. Restore your original mapping if needed. " +
-            "A successful USB write alone does not prove that layer 2 is stored or active.",
-            "Experimental hardware layers", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            "This 4x4/3-knob device has three usable hardware layers (75 actions).\r\n\r\n" +
+            "Edit layer selects the programming target. Use the physical layer button to cycle the active hardware layer. " +
+            "The application cannot currently read or switch the active layer.\r\n\r\n" +
+            "Older local profiles may contain experimental layers above 3. These are preserved but cannot be uploaded. " +
+            "RGB configuration and the additional hardware switch remain under investigation.",
+            "Hardware layers", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void ExportProfile()
@@ -336,6 +334,7 @@ internal sealed class K8850Dialog : Form
                 int layer = int.Parse(parts[0]), slot = int.Parse(parts[1]);
                 var report = K8850Binding.Encode(slot, layer, entry.Value);
                 string label = $"Layer {layer}, slot {slot}: {entry.Value}";
+                if (layer > 3) issues.Add("Unsupported hardware layer: " + label);
                 report[2] = 0; // Ignore slot, but keep layer and action bytes.
                 string signature = Convert.ToHexString(report);
                 if (!packets.TryGetValue(signature, out var matches))
@@ -528,8 +527,10 @@ internal sealed class K8850Dialog : Form
                 return K8850Binding.Encode(int.Parse(parts[1]), int.Parse(parts[0]), x.Value);
             }).ToArray();
             if (reports.Length == 0) return;
+            if (reports.Any(r => r[3] > 3))
+                throw new InvalidOperationException("Profile contains unsupported layers above 3. No bindings were written.");
             string layerWarning = reports.Any(r => r[3] != 1)
-                ? "\r\n\r\nIncludes unverified hardware layers. This does not switch the active layer." : "";
+                ? "\r\n\r\nIncludes layers 2 or 3. Use the physical layer button to activate them." : "";
             if (MessageBox.Show(this, $"Overwrite {reports.Length} configured binding(s)? Unknown slots will not be written." + layerWarning,
                 "Confirm hardware write", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             _busy = true;

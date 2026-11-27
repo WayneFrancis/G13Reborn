@@ -193,3 +193,7 @@ Commit 1dfddfbb adds Gaming / Extended keys to K8850Dialog.cs. Fixed dropdown co
 ## K8850 automated regression coverage
 
 Commits cdf3f6e and ea60013 add hardware-free K8850 tests to existing G13Reborn.SmokeTests. The test project links the actual K8850Profiles.cs source to exercise the internal binding encoder without referencing the WinForms executable. Tests cover exact 64-byte packets and zero padding, finish, button/knob slots, modifier chords, multimedia including high-byte usage, mouse buttons/wheel, F1–F24, International/Language 1–9, hex equivalence, sequences, maximum tokens and rejection of invalid arguments. These test protocol encoding, not Windows recognition or hardware delivery. Run `dotnet run --project tests/G13Reborn.SmokeTests`. Compilation and execution pending user verification; assistant has not run them. No production behavior changed. Next: gaming profile generator after test verification.
+
+## Multimedia Minecraft compatibility observation
+
+User reports Previous Track and Next Track both appear as scancode.256 in Minecraft. Existing encoder uses distinct standard Consumer Page usages Previous 0xB6 and Next 0xB5, so no mapping collision is apparent in source. Actual firmware output and Windows media action behavior remain unverified; Minecraft/GLFW input translation is a possible cause, not confirmed. Test with a media player containing multiple tracks, or inspect Windows consumer input events, before changing protocol. Do not count these as independent Minecraft bindings. No production code changes.

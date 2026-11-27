@@ -143,3 +143,21 @@ Expected F13 Windows ConsoleKey decimal 124, F24 decimal 135. USB usage and Wind
 - 2026-11-27: Recorded International 1 -> Minecraft scancode.115 observation; no source changes.
 
 - 2026-11-27: Recorded International 6 (Minecraft scancode.92, Windows VK 234) and International 9 (no detected event in either test). No source changes.
+
+## Complete international-key detection matrix (2026-11-27)
+
+User tested all nine international usages on K8850 in ATM10 and PowerShell Console.ReadKey. This supersedes the earlier partial observations.
+
+| International | HID usage (hex) | Minecraft | ConsoleKey/VK decimal |
+|---|---|---|---|
+| 1 | 87 | scancode.115 | 193 |
+| 2 | 88 | scancode.112 | No response |
+| 3 | 89 | scancode.125 | No response |
+| 4 | 8A | scancode.121 | No response |
+| 5 | 8B | scancode.123 | 235 |
+| 6 | 8C | scancode.92 | 234 |
+| 7 | 8D | No response | No response |
+| 8 | 8E | No response | No response |
+| 9 | 8F | No response | No response |
+
+All three reported ConsoleKey events had Modifiers: 0. Six distinct Minecraft scancodes detected; actual action activation and persistence still unverified. Console.ReadKey misses International 2–4 despite Minecraft recognition; do not use console detection alone as a compatibility criterion. International 7–9 failure location remains unknown. Next test Language 1–9. Consider a verified ATM10-compatible category or compatibility annotations after testing. F13/F24 endpoints plus six international keys detected; intermediate F14–F23 remain individually unverified. No source changes or new automated test run.

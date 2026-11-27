@@ -161,3 +161,19 @@ User tested all nine international usages on K8850 in ATM10 and PowerShell Conso
 | 9 | 8F | No response | No response |
 
 All three reported ConsoleKey events had Modifiers: 0. Six distinct Minecraft scancodes detected; actual action activation and persistence still unverified. Console.ReadKey misses International 2–4 despite Minecraft recognition; do not use console detection alone as a compatibility criterion. International 7–9 failure location remains unknown. Next test Language 1–9. Consider a verified ATM10-compatible category or compatibility annotations after testing. F13/F24 endpoints plus six international keys detected; intermediate F14–F23 remain individually unverified. No source changes or new automated test run.
+
+## Complete language-key detection matrix (2026-11-27)
+
+| Language | HID usage (hex) | Minecraft ATM10 | PowerShell Console.ReadKey |
+|---|---|---|---|
+| 1 | 90 | Not bound | No response |
+| 2 | 91 | Not bound | No response |
+| 3 | 92 | scancode.120 | No response |
+| 4 | 93 | scancode.119 | No response |
+| 5 | 94 | F24 | F24, decimal 135, Modifiers 0 |
+| 6 | 95 | No response | No response |
+| 7 | 96 | No response | No response |
+| 8 | 97 | No response | No response |
+| 9 | 98 | No response | No response |
+
+Language 1–2 change the binding to Not bound, distinct from no detected keypress on 6–9. Language 5 duplicates F24 and is not an independent binding. Language 3–4 add two unique scancodes to the six international scancodes. Potential gaming set: F13–F24 plus International 1–6 plus Language 3–4 = 20 distinct candidates; only F13/F24 endpoints individually verified so far, giving ten individually observed distinct candidates. Actual action activation and persistence still unverified. Next: test F14–F23 and action activation, then add Gaming / Extended keys category with verified names/scancodes, retaining experimental choices separately. No application changes or automated test run in this documentation update.

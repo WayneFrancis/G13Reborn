@@ -86,6 +86,7 @@ internal sealed class K8850Dialog : Form
         Add("Export profile...", ExportProfile);
         Add("Import profile...", ImportProfile);
         Add("Generate gaming profile...", GenerateGamingProfile);
+        profiles.MaximumSize = new Size(850, 0);
         root.Controls.Add(profiles);
         root.Controls.Add(_devices);
         root.Controls.Add(_refresh);

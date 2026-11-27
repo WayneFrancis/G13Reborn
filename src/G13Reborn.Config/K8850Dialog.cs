@@ -25,6 +25,13 @@ internal sealed class K8850Dialog : Form
             "Execute", "Help", "Menu", "Select", "Stop", "Again", "Undo", "Cut", "Copy", "Paste", "Find" })
         .Concat(Enumerable.Range(1, 9).Select(i => $"International {i}"))
         .Concat(Enumerable.Range(1, 9).Select(i => $"Language {i}")).ToArray();
+    private const string GamingCategory = "Gaming / Extended keys";
+    private static readonly string[] GamingKeys = Enumerable.Range(13, 12).Select(i => $"F{i}")
+        .Concat(Enumerable.Range(1, 6).Select(i => $"International {i}"))
+        .Concat(new[] { "Language 3", "Language 4" }).ToArray();
+    private static readonly string[] GamingLabels = GamingKeys.Take(12)
+        .Concat(GamingKeys.Skip(12).Zip(new[] { 115, 112, 125, 121, 123, 92, 120, 119 },
+            (key, scan) => $"{key} (scancode.{scan})")).ToArray();
     private readonly Button _upload = new() { Text = "Upload selected binding", AutoSize = true };
     private readonly Button _refresh = new() { Text = "Refresh devices", AutoSize = true };
     private bool _busy, _loading;
@@ -99,7 +106,7 @@ internal sealed class K8850Dialog : Form
         root.Controls.Add(selection);
         root.Controls.Add(new Label { Text = "Assignment (select an action or capture a keyboard shortcut)", AutoSize = true });
         var editor = new FlowLayoutPanel { AutoSize = true };
-        _category.Items.AddRange(new object[] { "Keyboard", "Extended keyboard", "Multimedia", "Mouse", "Advanced / hex" });
+        _category.Items.AddRange(new object[] { "Keyboard", GamingCategory, "Extended keyboard", "Multimedia", "Mouse", "Advanced / hex" });
         editor.Controls.AddRange(new Control[] { _category, _tokens, _capture });
         var forget = new Button { Text = "Forget local assignment", AutoSize = true };
         forget.Click += (_, _) => { _profile.Bindings.Remove(BindingKey); ShowBinding(); };
@@ -123,7 +130,7 @@ internal sealed class K8850Dialog : Form
         _slot.ValueChanged += (_, _) => ShowBinding();
         _layer.ValueChanged += (_, _) => ShowBinding();
         _tokens.TextChanged += (_, _) => {
-            if (_loading) return;
+            if (_loading || _category.Text == GamingCategory) return;
             if (string.IsNullOrWhiteSpace(_tokens.Text)) return;
             else
             {
@@ -136,6 +143,12 @@ internal sealed class K8850Dialog : Form
         };
         _tokens.SelectionChangeCommitted += (_, _) => {
             if (_loading || _tokens.SelectedItem is not string value) return;
+            if (_category.Text == GamingCategory)
+            {
+                int index = Array.IndexOf(GamingLabels, value);
+                if (index < 0) return;
+                value = GamingKeys[index];
+            }
             _profile.Bindings[BindingKey] = value;
             RefreshLabels();
         };
@@ -180,6 +193,7 @@ internal sealed class K8850Dialog : Form
         var category = Media.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Multimedia" :
             MouseActions.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Mouse" :
             value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase) ? "Advanced / hex" :
+            GamingKeys.Contains(value, StringComparer.OrdinalIgnoreCase) ? GamingCategory :
             ExtendedKeyboard.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Extended keyboard" : "Keyboard";
         ConfigureEditor(category, value);
         _loading = false;
@@ -189,13 +203,13 @@ internal sealed class K8850Dialog : Form
     {
         _category.SelectedItem = category;
         _tokens.Items.Clear();
-        bool fixedList = category is "Multimedia" or "Mouse";
+        bool fixedList = category is "Multimedia" or "Mouse" or GamingCategory;
         _tokens.DropDownStyle = fixedList ? ComboBoxStyle.DropDownList : ComboBoxStyle.DropDown;
         _tokens.Items.AddRange(category switch {
-            "Multimedia" => Media, "Mouse" => MouseActions, "Keyboard" => Keyboard, "Extended keyboard" => ExtendedKeyboard, _ => Array.Empty<string>()
+            GamingCategory => GamingLabels, "Multimedia" => Media, "Mouse" => MouseActions, "Keyboard" => Keyboard, "Extended keyboard" => ExtendedKeyboard, _ => Array.Empty<string>()
         });
         if (fixedList)
-            _tokens.SelectedIndex = Array.FindIndex(category == "Multimedia" ? Media : MouseActions,
+            _tokens.SelectedIndex = Array.FindIndex(category == GamingCategory ? GamingKeys : category == "Multimedia" ? Media : MouseActions,
                 x => x.Equals(value, StringComparison.OrdinalIgnoreCase));
         else _tokens.Text = category == "Advanced / hex" && value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase)
             ? value[4..].Trim() : value;

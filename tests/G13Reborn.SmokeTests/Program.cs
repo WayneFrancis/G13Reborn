@@ -1596,3 +1596,24 @@ Check(minecraftOptionsSample.Match("Next Track").SequenceEqual(minecraftOptionsS
 Check(minecraftOptionsSample.Match("Left Click").Single() == "key.example.click", "Minecraft mouse match");
 Check(minecraftOptionsSample.Match("Ctrl+Shift+F13").Count == 0 && minecraftOptionsSample.Match("A,B").Count == 0, "Minecraft no speculative multi-modifier or sequence matching");
 Console.WriteLine("Minecraft options keybinding matcher tests passed.");
+
+string minecraftTestJar = Path.Combine(Path.GetTempPath(), "g13-minecraft-" + Guid.NewGuid().ToString("N") + ".jar");
+try
+{
+    using (var archive = System.IO.Compression.ZipFile.Open(minecraftTestJar, System.IO.Compression.ZipArchiveMode.Create))
+    {
+        using (var writer = new StreamWriter(archive.CreateEntry("assets/example/lang/en_us.json").Open()))
+            writer.Write("{\"key.example.hover\":\"Toggle Hover\",\"key.example.modified\":\"Modified Action\",\"unrelated\":\"Ignored\"}");
+        using (var writer = new StreamWriter(archive.CreateEntry("assets/example/lang/de_de.json").Open()))
+            writer.Write("{\"key.example.second\":\"Nicht Englisch\"}");
+    }
+    minecraftOptionsSample.LoadTranslations(new[] { minecraftTestJar });
+    Check(minecraftOptionsSample.TranslationCount == 2, "Only relevant English action translations loaded");
+    Check(minecraftOptionsSample.Describe("key.example.hover") == "Toggle Hover", "Minecraft translation lookup");
+    Check(minecraftOptionsSample.Describe("key.example.second") == "key.example.second", "Unresolved action falls back to identifier");
+    Check(minecraftOptionsSample.Entries.Single(e => e.Id == "key.example.hover").SharedCount == 2, "Shared Minecraft input count");
+    Check(minecraftOptionsSample.Entries.Single(e => e.Id == "key.example.modified").SharedCount == 1, "Modifier-specific shared count");
+    Check(MinecraftBindings.GetSignature("Ctrl+F13") == "key.keyboard.f13:CONTROL", "Minecraft canonical input signature");
+}
+finally { File.Delete(minecraftTestJar); }
+Console.WriteLine("Minecraft language resource and action list tests passed.");

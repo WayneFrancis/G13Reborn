@@ -112,7 +112,7 @@ Keyboard editor supports named chords (Ctrl+C), comma-separated sequences, raw h
 - User confirmed profile-management version worked; categorized assignment editor improved usability. No individual exhaustive test log for every media/mouse/profile operation.
 - Earlier raw 68 attempt retained D/L; PowerShell reported D=68 decimal or L=76 decimal, NOT HID usage 68 hex. Status Unknown key 68 confirmed parser failure. Fixed by automatic hex prefix and named F13–F24.
 - User explicitly confirmed Minecraft ATM10 detects F13 programmed via hex and F24 via named Keyboard option. This verifies endpoints of extended function-key range and native hardware output, not every intermediate key or every combination.
-- User subsequently confirmed International 1 (HID 0x87) is detected in Minecraft ATM10 as scancode.115 (decimal). This is a raw scancode binding candidate; distinctness, persistence and actual action activation remain to be tested. Other international/language keys have no individually reported results yet. Extended-category hardware testing has therefore begun; no new full build/smoke-test log supplied.
+- User subsequently confirmed International 1 (HID 0x87) is detected in Minecraft ATM10 as scancode.115 (decimal). This is a raw scancode binding candidate; distinctness, persistence and actual action activation remain to be tested. International 6 (HID 0x8C) is detected as Minecraft scancode.92 (decimal); PowerShell Console.ReadKey reports Key: 234 | Code: 234 | Modifiers: 0 (Windows virtual key 0xEA). International 9 (HID 0x8F) produces no detected event in either Minecraft or the PowerShell test. This does not establish whether firmware or Windows translation is responsible. Other international/language keys have no individually reported results yet. Extended-category hardware testing has therefore begun; no new full build/smoke-test log supplied.
 - No dedicated automated K8850 tests added yet. No current CI result independently checked.
 
 ## Current position / next steps
@@ -141,3 +141,5 @@ Expected F13 Windows ConsoleKey decimal 124, F24 decimal 135. USB usage and Wind
 - 2026-11-27: Initial consolidated handover added on K8850 feature branch. Includes prior G13 work, VHF safety boundaries, K8850 protocol and verified hardware milestones, extended-key work and outstanding tests. Historical details reconstructed from development conversation and repository documentation; not a new independent test run.
 
 - 2026-11-27: Recorded International 1 -> Minecraft scancode.115 observation; no source changes.
+
+- 2026-11-27: Recorded International 6 (Minecraft scancode.92, Windows VK 234) and International 9 (no detected event in either test). No source changes.

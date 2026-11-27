@@ -59,6 +59,7 @@ internal sealed class K8850Dialog : Form
         Text = "K8850 Macropad — experimental";
         Size = new Size(1000, 650);
         StartPosition = FormStartPosition.CenterParent;
+        WindowPlacement.Attach(this, "k8850");
         var root = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
             WrapContents = false, AutoScroll = true, Padding = new Padding(12) };
         Controls.Add(root);

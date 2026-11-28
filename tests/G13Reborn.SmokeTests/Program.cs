@@ -1617,3 +1617,22 @@ try
 }
 finally { File.Delete(minecraftTestJar); }
 Console.WriteLine("Minecraft language resource and action list tests passed.");
+
+var minecraftUsageSample = MinecraftBindings.Parse(new[] {
+    "key_key.example.normal:key.keyboard.f13",
+    "key_key.example.chord:key.keyboard.f13:SHIFT",
+    "key_key.example.sneak:key.keyboard.left.shift",
+    "key_key.example.right:key.keyboard.right.shift",
+    "key_key.example.intl:scancode.115"
+});
+var minecraftShiftUsage = minecraftUsageSample.Inspect("Shift+F13")!;
+Check(minecraftShiftUsage.ExactActions.SequenceEqual(new[] { "key.example.chord" }), "Minecraft exact chord action");
+Check(minecraftShiftUsage.OtherModifierActions.SequenceEqual(new[] { "key.example.normal" }), "Minecraft same-base action warning");
+Check(minecraftShiftUsage.ModifierKeyActions.SequenceEqual(new[] { "key.example.sneak" }), "Minecraft standalone left shift warning");
+Check(minecraftUsageSample.Inspect("RShift+F13")!.ModifierKeyActions.SequenceEqual(new[] { "key.example.right" }), "Minecraft standalone right shift warning");
+Check(minecraftUsageSample.Inspect("F13")!.OtherModifierActions.SequenceEqual(new[] { "key.example.chord" }), "Minecraft unmodified key detects chord reservation");
+Check(minecraftUsageSample.Inspect("F24")!.ExactActions.Count == 0 &&
+    minecraftUsageSample.Inspect("F24")!.OtherModifierActions.Count == 0, "Minecraft unused extended candidate");
+Check(minecraftUsageSample.Inspect("International 1")!.ExactActions.Count == 1, "Minecraft international reservation");
+Check(minecraftUsageSample.Inspect("A,B") == null, "Minecraft sequence availability unknown");
+Console.WriteLine("Minecraft gaming key availability and modifier warning tests passed.");

@@ -12,6 +12,8 @@ internal sealed class K8850Dialog : Form
     private readonly TextBox _actionLabel = new() { Width = 240, PlaceholderText = "Optional action label", MaxLength = 100 };
     private readonly ToolTip _tooltips = new() { AutoPopDelay = 30000 };
     private sealed record DragAssignment(K8850Profile Profile, int Layer, int Slot);
+    private DragAssignment? _dragAssignment;
+    private const string SlotDragFormat = "G13Reborn.K8850.LocalSlot";
     private MinecraftBindings? _minecraftBindings;
     private readonly System.Windows.Forms.Timer _minecraftTimer = new() { Interval = 1500 };
     private readonly CheckBox _autoMinecraft = new() { Text = "Auto-refresh Minecraft", AutoSize = true };
@@ -931,12 +933,19 @@ internal sealed class K8850Dialog : Form
             if (threshold.Contains(e.Location)) return;
             dragStart = null;
             if (!_profile.Bindings.ContainsKey($"{_layer.Value}:{slot}")) return;
-            button.DoDragDrop(new DragAssignment(_profile, (int)_layer.Value, slot), DragDropEffects.Copy | DragDropEffects.Move);
+            _dragAssignment = new DragAssignment(_profile, (int)_layer.Value, slot);
+            try
+            {
+                var data = new DataObject();
+                data.SetData(SlotDragFormat, false, "slot");
+                button.DoDragDrop(data, DragDropEffects.Copy | DragDropEffects.Move);
+            }
+            finally { _dragAssignment = null; }
         };
         void UpdateEffect(DragEventArgs e)
         {
             e.Effect = DragDropEffects.None;
-            if (_busy || e.Data?.GetData(typeof(DragAssignment)) is not DragAssignment drag ||
+            if (_busy || e.Data?.GetDataPresent(SlotDragFormat, false) != true || _dragAssignment is not { } drag ||
                 !ReferenceEquals(drag.Profile, _profile) || drag.Layer != (int)_layer.Value || drag.Slot == slot ||
                 !_profile.Bindings.ContainsKey($"{drag.Layer}:{drag.Slot}")) return;
             bool copy = (e.KeyState & 8) != 0 || !_profile.Bindings.ContainsKey($"{drag.Layer}:{slot}");
@@ -947,7 +956,7 @@ internal sealed class K8850Dialog : Form
         button.DragDrop += (_, e) =>
         {
             UpdateEffect(e);
-            if (e.Effect == DragDropEffects.None || e.Data?.GetData(typeof(DragAssignment)) is not DragAssignment drag) return;
+            if (e.Effect == DragDropEffects.None || e.Data?.GetDataPresent(SlotDragFormat, false) != true || _dragAssignment is not { } drag) return;
             string source = $"{drag.Layer}:{drag.Slot}", destination = $"{drag.Layer}:{slot}";
             bool copy = e.Effect == DragDropEffects.Copy;
             try

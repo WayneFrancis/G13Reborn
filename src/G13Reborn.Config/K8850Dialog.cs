@@ -30,6 +30,18 @@ internal sealed class K8850Dialog : Form
     private readonly Button _copy = new() { Text = "Copy assignment", AutoSize = true };
     private readonly Button _paste = new() { Text = "Paste assignment", AutoSize = true };
     private readonly Button _swap = new() { Text = "Swap with copied slot", AutoSize = true };
+    private readonly Button _undo = new() { Text = "Undo", AutoSize = true, Enabled = false };
+    private readonly Button _redo = new() { Text = "Redo", AutoSize = true, Enabled = false };
+    private readonly Dictionary<K8850Profile, K8850EditHistory> _histories = new();
+    private K8850EditHistory History
+    {
+        get
+        {
+            if (!_histories.TryGetValue(_profile, out var history))
+                _histories[_profile] = history = new K8850EditHistory();
+            return history;
+        }
+    }
     private readonly ComboBox _tokens = new() { Width = 300, DropDownStyle = ComboBoxStyle.DropDown };
     private readonly ComboBox _category = new() { Width = 175, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly FlowLayoutPanel _modifiers = new() { AutoSize = true };
@@ -101,9 +113,14 @@ internal sealed class K8850Dialog : Form
         Add("Delete", () => {
             if (_store.Profiles.Count <= 1) throw new InvalidOperationException("Keep at least one profile.");
             if (MessageBox.Show(this, "Delete local profile?", "Confirm", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            _histories.Remove(_profile);
+            if (_copied is { } copy && ReferenceEquals(copy.Profile, _profile)) _copied = null;
             _store.Profiles.Remove(_profile); _store.Active = _store.Profiles[0].Name; Save(); ReloadProfiles();
         });
         Add("Save", Save);
+        profiles.Controls.AddRange(new Control[] { _undo, _redo });
+        _undo.Click += (_, _) => ReplayEdit(false);
+        _redo.Click += (_, _) => ReplayEdit(true);
         Add("Copy layer...", CopyLayer);
         Add("Print layout...", () => K8850PrintLayout.Show(this, _profile, (int)_layer.Value, _minecraftBindings, _minecraftStale));
         Add("Validate profile...", ValidateProfile);
@@ -146,7 +163,7 @@ internal sealed class K8850Dialog : Form
         _category.Items.AddRange(new object[] { "Keyboard", GamingCategory, "Extended keyboard", "Multimedia", "Mouse", "Advanced / hex" });
         editor.Controls.AddRange(new Control[] { _category, _tokens, _capture });
         var forget = new Button { Text = "Forget local assignment", AutoSize = true };
-        forget.Click += (_, _) => { SetLocalAssignment(_profile, BindingKey, null, null); ShowBinding(); };
+        forget.Click += (_, _) => { EditLocal("Forget assignment", () => SetLocalAssignment(_profile, BindingKey, null, null)); ShowBinding(); };
         editor.Controls.Add(forget);
         root.Controls.Add(editor);
         _modifiers.Controls.Add(new Label { Text = "Modifiers:", AutoSize = true });
@@ -196,20 +213,27 @@ internal sealed class K8850Dialog : Form
         _layerName.TextChanged += (_, _) => {
             if (_loading) return;
             int layer = (int)_layer.Value;
-            if (string.IsNullOrWhiteSpace(_layerName.Text)) _profile.LayerNames.Remove(layer);
-            else _profile.LayerNames[layer] = _layerName.Text.Trim();
+            EditLocal("Edit layer name", () => {
+                if (string.IsNullOrWhiteSpace(_layerName.Text)) _profile.LayerNames.Remove(layer);
+                else _profile.LayerNames[layer] = _layerName.Text.Trim();
+            }, $"layer-name:{layer}");
         };
         _actionLabel.TextChanged += (_, _) => {
             if (_loading) return;
-            if (string.IsNullOrWhiteSpace(_actionLabel.Text)) _profile.Labels.Remove(BindingKey);
-            else _profile.Labels[BindingKey] = _actionLabel.Text.Trim();
+            EditLocal("Edit action label", () => {
+                if (string.IsNullOrWhiteSpace(_actionLabel.Text)) _profile.Labels.Remove(BindingKey);
+                else _profile.Labels[BindingKey] = _actionLabel.Text.Trim();
+            }, $"label:{BindingKey}");
             RefreshLabels();
         };
+        foreach (Control control in new Control[] { _layerName, _actionLabel, _tokens })
+            control.Leave += (_, _) => History.BreakGroup();
         _copy.Click += (_, _) => CopyAssignment();
         _paste.Click += (_, _) => PasteAssignment(false);
         _swap.Click += (_, _) => PasteAssignment(true);
         Disposed += (_, _) => { _minecraftTimer.Stop(); _minecraftTimer.Dispose(); _tooltips.Dispose(); };
         _category.SelectionChangeCommitted += (_, _) => {
+            History.BreakGroup();
             _loading = true;
             ConfigureEditor(_category.Text, "");
             _loading = false;
@@ -224,8 +248,8 @@ internal sealed class K8850Dialog : Form
         _upload.Click += async (_, _) => await UploadAsync(0);
         _modified.Click += async (_, _) => await UploadAsync(1);
         _all.Click += async (_, _) => await UploadAsync(2);
-        _slot.ValueChanged += (_, _) => ShowBinding();
-        _layer.ValueChanged += (_, _) => ShowBinding();
+        _slot.ValueChanged += (_, _) => { History.BreakGroup(); ShowBinding(); };
+        _layer.ValueChanged += (_, _) => { History.BreakGroup(); ShowBinding(); };
         _tokens.TextChanged += (_, _) => {
             if (_loading || _category.Text == GamingCategory) return;
             if (IsKeyboardCategory(_category.Text))
@@ -239,7 +263,7 @@ internal sealed class K8850Dialog : Form
                 var value = _tokens.Text.Trim();
                 if (_category.Text == "Advanced / hex" && !value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase))
                     value = "hex: " + value;
-                _profile.Bindings[BindingKey] = value;
+                EditLocal("Edit assignment", () => _profile.Bindings[BindingKey] = value, $"binding:{BindingKey}");
             }
             RefreshLabels();
         };
@@ -256,12 +280,13 @@ internal sealed class K8850Dialog : Form
                 StoreEditorBinding();
                 return;
             }
-            _profile.Bindings[BindingKey] = value;
+            EditLocal("Select assignment", () => _profile.Bindings[BindingKey] = value);
             RefreshLabels();
         };
         _profiles.SelectedIndexChanged += (_, _) => {
             if (_loading || _profiles.SelectedItem is not K8850Profile p) return;
-            _profile = p; _store.Active = p.Name; ShowBinding();
+            History.BreakGroup();
+            _profile = p; _store.Active = p.Name; History.BreakGroup(); ShowBinding();
         };
         ReloadProfiles();
         _devices.SelectedIndexChanged += (_, _) => RefreshLabels();
@@ -481,7 +506,7 @@ internal sealed class K8850Dialog : Form
         Refresh();
         if (dialog.ShowDialog(this) != DialogResult.OK || selectedBinding == null) return;
         K8850Binding.Encode((int)_slot.Value, destinationLayer, selectedBinding);
-        _profile.Bindings[destination] = selectedBinding;
+        EditLocal("Assign gaming key", () => _profile.Bindings[destination] = selectedBinding);
         ShowBinding();
         _status.Text = $"Assigned {selectedBinding} locally to {destination}. Existing action label retained; configure Minecraft separately and upload when ready.";
     }
@@ -566,16 +591,18 @@ internal sealed class K8850Dialog : Form
         dialog.Controls.Add(footer);
         dialog.CancelButton = cancel;
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        foreach (int index in list.CheckedIndices)
-        {
-            var item = suggestions[index];
-            _profile.Labels[item.Key] = item.Label;
-        }
+        EditLocal("Apply Minecraft label suggestions", () => {
+            foreach (int index in list.CheckedIndices)
+            {
+                var item = suggestions[index];
+                _profile.Labels[item.Key] = item.Label;
+            }
+        });
         ShowBinding();
         _status.Text = $"Applied {list.CheckedIndices.Count} local labels. No hardware or Minecraft files changed.";
     }
 
-    private void Save() => _store.Save();
+    private void Save() { History.BreakGroup(); _store.Save(); }
     private string NewName()
     {
         var name = _name.Text.Trim();
@@ -623,13 +650,15 @@ internal sealed class K8850Dialog : Form
         if (replace.Checked && entries.Any(x => _profile.Bindings.ContainsKey($"{target}:{x.Slot}")) &&
             MessageBox.Show(this, $"Replace overlapping assignments on layer {target}? Unknown source slots will not erase destination slots.",
                 "Confirm layer copy", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
-        foreach (var entry in entries)
-            SetLocalAssignment(_profile, $"{target}:{entry.Slot}", entry.Binding, entry.Label);
-        if (copyName.Checked)
-        {
-            if (_profile.LayerNames.TryGetValue(source, out var name)) _profile.LayerNames[target] = name;
-            else _profile.LayerNames.Remove(target);
-        }
+        EditLocal("Copy layer", () => {
+            foreach (var entry in entries)
+                SetLocalAssignment(_profile, $"{target}:{entry.Slot}", entry.Binding, entry.Label);
+            if (copyName.Checked)
+            {
+                if (_profile.LayerNames.TryGetValue(source, out var name)) _profile.LayerNames[target] = name;
+                else _profile.LayerNames.Remove(target);
+            }
+        });
         _layer.Value = target;
         ShowBinding();
         _status.Text = $"Copied {entries.Length} local assignments from layer {source} to {target}. No hardware written.";
@@ -862,7 +891,8 @@ internal sealed class K8850Dialog : Form
             _status.Text = "Use modifier checkboxes with a single key, or clear them to enter a shortcut or sequence.";
             return;
         }
-        _profile.Bindings[BindingKey] = string.Join("+", modifiers.Append(key));
+        EditLocal("Edit keyboard assignment", () => _profile.Bindings[BindingKey] = string.Join("+", modifiers.Append(key)),
+            _tokens.Focused && _tokens.DropDownStyle != ComboBoxStyle.DropDownList ? $"binding:{BindingKey}" : null);
         RefreshLabels();
     }
 
@@ -913,7 +943,7 @@ internal sealed class K8850Dialog : Form
         };
         if (dialog.ShowDialog(this) == DialogResult.OK && captured != null)
         {
-            _profile.Bindings[BindingKey] = captured;
+            EditLocal("Capture shortcut", () => _profile.Bindings[BindingKey] = captured);
             ShowBinding();
         }
     }
@@ -970,8 +1000,10 @@ internal sealed class K8850Dialog : Form
                 if (previous != null && MessageBox.Show(this,
                     copy ? "Replace destination assignment and label?" : "Swap the two assignments and labels?",
                     "Confirm local drag edit", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
-                if (!copy) SetLocalAssignment(_profile, source, previous, previousLabel);
-                SetLocalAssignment(_profile, destination, binding, label);
+                EditLocal(copy ? "Drag copy assignment" : "Drag swap assignments", () => {
+                    if (!copy) SetLocalAssignment(_profile, source, previous, previousLabel);
+                    SetLocalAssignment(_profile, destination, binding, label);
+                });
                 _slot.Value = slot;
                 ShowBinding();
                 _status.Text = copy ? "Copied local assignment by dragging. Review before uploading." :
@@ -1016,14 +1048,60 @@ internal sealed class K8850Dialog : Form
             if (_profile.Bindings.ContainsKey(destination) &&
                 MessageBox.Show(this, swap ? "Swap the two local assignments and labels?" : "Replace the destination local assignment and label?",
                     "Confirm local edit", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
-            if (swap)
-                SetLocalAssignment(_profile, copy.Key, _profile.Bindings[destination], _profile.Labels.GetValueOrDefault(destination));
-            SetLocalAssignment(_profile, destination, binding, label);
+            EditLocal(swap ? "Swap assignments" : "Paste assignment", () => {
+                if (swap)
+                    SetLocalAssignment(_profile, copy.Key, _profile.Bindings[destination], _profile.Labels.GetValueOrDefault(destination));
+                SetLocalAssignment(_profile, destination, binding, label);
+            });
             if (swap) _copied = null;
             ShowBinding();
             _status.Text = swap ? "Swapped local assignments. Review before uploading." : "Pasted local assignment. Review before uploading.";
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message); }
+    }
+
+    private void EditLocal(string description, Action change, string? group = null)
+    {
+        History.Edit(_profile, description, change, group);
+        UpdateHistoryButtons();
+    }
+
+    private void UpdateHistoryButtons()
+    {
+        var undo = History.UndoDescription;
+        var redo = History.RedoDescription;
+        _undo.Enabled = !_busy && undo != null;
+        _redo.Enabled = !_busy && redo != null;
+        _tooltips.SetToolTip(_undo, undo == null ? "No local edits to undo" : "Undo: " + undo + " (Ctrl+Z)");
+        _tooltips.SetToolTip(_redo, redo == null ? "No local edits to redo" : "Redo: " + redo + " (Ctrl+Y)");
+    }
+
+    private void ReplayEdit(bool redo)
+    {
+        if (_busy) return;
+        string? description = redo ? History.Redo(_profile) : History.Undo(_profile);
+        if (description == null) return;
+        ShowBinding();
+        _status.Text = (redo ? "Redid: " : "Undid: ") + description +
+            ". Local profile only; previously uploaded hardware is unchanged. Unknown slots are not cleared.";
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (!_busy && !_name.ContainsFocus && !_slot.ContainsFocus && !_layer.ContainsFocus)
+        {
+            if (keyData == (Keys.Control | Keys.Z))
+            {
+                ReplayEdit(false);
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.Y) || keyData == (Keys.Control | Keys.Shift | Keys.Z))
+            {
+                ReplayEdit(true);
+                return true;
+            }
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     private void RefreshLabels()
@@ -1054,6 +1132,7 @@ internal sealed class K8850Dialog : Form
         _paste.Enabled = _copied.HasValue;
         _swap.Enabled = _copied is { } copy && ReferenceEquals(copy.Profile, _profile) &&
             copy.Key != BindingKey && _profile.Bindings.ContainsKey(copy.Key) && _profile.Bindings.ContainsKey(BindingKey);
+        UpdateHistoryButtons();
         UpdateUpload();
     }
     private void UpdateUpload()

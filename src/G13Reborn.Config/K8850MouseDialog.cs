@@ -23,7 +23,7 @@ internal static class K8850MouseDialog
         modifier.Items.AddRange(new object[] { "None", "Ctrl", "Shift", "Alt" });
         modifier.SelectedIndex = initial.Modifier switch { 0xf1 => 1, 0xf2 => 2, 0xf3 => 3, _ => 0 };
         NumericUpDown Number(int value) => new() { Minimum = -128, Maximum = 127, Value = value, Width = 75 };
-        var x = Number(initial.X), y = Number(initial.Y), wheel = Number(initial.Wheel == 0 ? 1 : initial.Wheel);
+        NumericUpDown x = Number(initial.X), y = Number(initial.Y), wheel = Number(initial.Wheel == 0 ? 1 : initial.Wheel);
         var movement = new FlowLayoutPanel { AutoSize = true };
         movement.Controls.AddRange(new Control[] { new Label { Text = "X", AutoSize = true }, x,
             new Label { Text = "Y", AutoSize = true }, y });

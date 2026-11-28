@@ -1667,3 +1667,26 @@ try
 }
 finally { Directory.Delete(minecraftReloadFolder, true); }
 Console.WriteLine("Minecraft options refresh and translation cache tests passed.");
+
+var minecraftVanillaFolder = Path.Combine(Path.GetTempPath(), "g13-vanilla-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(minecraftVanillaFolder);
+try
+{
+    string vanillaOptions = Path.Combine(minecraftVanillaFolder, "options.txt");
+    string vanillaVersion = "1.21.1";
+    string vanillaVersionDir = Directory.CreateDirectory(Path.Combine(minecraftVanillaFolder, "versions", vanillaVersion)).FullName;
+    string vanillaJar = Path.Combine(vanillaVersionDir, vanillaVersion + ".jar");
+    using (var archive = System.IO.Compression.ZipFile.Open(vanillaJar, System.IO.Compression.ZipArchiveMode.Create))
+    using (var writer = new StreamWriter(archive.CreateEntry("assets/minecraft/lang/en_us.json").Open()))
+        writer.Write("{\"key.jump\":\"Jump\",\"key.sneak\":\"Sneak\"}");
+    File.WriteAllText(Path.Combine(minecraftVanillaFolder, "manifest.json"), "{\"minecraft\":{\"version\":\"1.21.1\"}}");
+    File.WriteAllLines(vanillaOptions, new[] { "key_key.jump:key.keyboard.space", "key_key.sneak:key.keyboard.left.shift" });
+    var vanillaBindings = MinecraftBindings.Load(vanillaOptions);
+    Check(vanillaBindings.VanillaClientPath == vanillaJar, "Minecraft client exact version autodetection");
+    Check(vanillaBindings.Describe("key.jump") == "Jump", "Vanilla action translation");
+    File.Delete(Path.Combine(minecraftVanillaFolder, "manifest.json"));
+    Check(MinecraftBindings.FindVanillaClient(vanillaOptions) == null, "No guessing vanilla version without metadata");
+    Check(MinecraftBindings.Load(vanillaOptions, vanillaJar).Describe("key.sneak") == "Sneak", "Explicit vanilla client translation");
+}
+finally { Directory.Delete(minecraftVanillaFolder, true); }
+Console.WriteLine("Minecraft vanilla client translation tests passed.");

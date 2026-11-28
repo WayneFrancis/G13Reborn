@@ -11,16 +11,63 @@ internal sealed class MinecraftBindings
     public int Count { get; private set; }
     public int TranslationCount => _actions.Values.SelectMany(x => x).Distinct(StringComparer.Ordinal).Count(_translations.ContainsKey);
     public int UnreadableArchives { get; private set; }
+    public string? VanillaClientPath { get; private set; }
 
     public sealed record ActionEntry(string Id, string Description, string Input, string Signature, int SharedCount);
 
-    public static MinecraftBindings Load(string path)
+    public static MinecraftBindings Load(string path, string? vanillaClientPath = null)
     {
         var result = Parse(File.ReadLines(path));
         var mods = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, "mods");
         if (Directory.Exists(mods))
             result.LoadTranslations(Directory.EnumerateFiles(mods, "*.jar").OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
+        string? client = vanillaClientPath ?? FindVanillaClient(path);
+        if (!string.IsNullOrWhiteSpace(client))
+        {
+            result.VanillaClientPath = client;
+            result.LoadTranslations(new[] { client });
+        }
         return result;
+    }
+
+    // Only select a vanilla client when instance metadata gives an exact version.
+    // Never guess by choosing the newest installed Minecraft version.
+    internal static string? FindVanillaClient(string optionsPath)
+    {
+        var instance = Path.GetDirectoryName(Path.GetFullPath(optionsPath))!;
+        string? version = null;
+        foreach (var file in new[] { "manifest.json", "minecraftinstance.json" })
+        {
+            try
+            {
+                string path = Path.Combine(instance, file);
+                if (!File.Exists(path)) continue;
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) continue;
+                if (root.TryGetProperty("minecraft", out var minecraft) && minecraft.ValueKind == JsonValueKind.Object &&
+                    minecraft.TryGetProperty("version", out var nested) && nested.ValueKind == JsonValueKind.String)
+                    version = nested.GetString();
+                else if (root.TryGetProperty("gameVersion", out var direct) && direct.ValueKind == JsonValueKind.String)
+                    version = direct.GetString();
+                if (!string.IsNullOrWhiteSpace(version)) break;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
+        }
+        if (string.IsNullOrWhiteSpace(version) || !System.Text.RegularExpressions.Regex.IsMatch(version, @"^\d+\.\d+(\.\d+)?$"))
+            return null;
+        var roots = new List<string> { instance,
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), ".minecraft") };
+        // CurseForge commonly stores instances below Minecraft/Instances and clients below Minecraft/Install.
+        var parent = Directory.GetParent(instance);
+        if (parent?.Parent != null && parent.Name.Equals("Instances", StringComparison.OrdinalIgnoreCase))
+            roots.Add(Path.Combine(parent.Parent.FullName, "Install"));
+        foreach (string root in roots)
+        {
+            string jar = Path.Combine(root, "versions", version, version + ".jar");
+            if (File.Exists(jar)) return jar;
+        }
+        return null;
     }
 
     public MinecraftBindings ReloadOptions(string path)
@@ -29,7 +76,8 @@ internal sealed class MinecraftBindings
         // Existing IDs (including unbound actions) already had a translation lookup.
         // Rescan only if the options contain newly encountered action IDs.
         if (!result._knownActions.IsSubsetOf(_knownActions))
-            return Load(path);
+            return Load(path, VanillaClientPath);
+        result.VanillaClientPath = VanillaClientPath;
         foreach (var pair in _translations) result._translations.Add(pair.Key, pair.Value);
         result.UnreadableArchives = UnreadableArchives;
         result._knownActions.UnionWith(_knownActions);

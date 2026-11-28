@@ -1736,3 +1736,24 @@ int undoCount = 0;
 while (boundedHistory.Undo(boundedProfile) != null) undoCount++;
 Check(undoCount == 100 && boundedProfile.Labels["1:1"] == "10", "K8850 history bounded to 100 edits");
 Console.WriteLine("K8850 local edit history tests passed.");
+
+var visualMacro = K8850MacroSequence.Parse("Ctrl+C,Shift+F13,Enter");
+Check(visualMacro.TokenCount == 5 && visualMacro.Steps.Count == 3, "K8850 macro parses named chords");
+visualMacro.Move(2, 0);
+visualMacro.Insert(1, "International 1");
+visualMacro.Replace(2, "Ctrl+Shift+S");
+visualMacro.Remove(3);
+Check(visualMacro.Binding == "Enter,International 1,Ctrl+Shift+S" && visualMacro.TokenCount == 5,
+    "K8850 visual sequence editing and token count");
+Check(K8850Binding.Encode(1, 1, visualMacro.Binding)[6] == visualMacro.TokenCount, "Visual sequence matches wire encoder");
+var fullMacro = K8850MacroSequence.Parse(string.Join(",", Enumerable.Repeat("Ctrl+A", 9)));
+Check(fullMacro.TokenCount == 18, "K8850 visual macro exact token limit");
+K8850Reject<InvalidOperationException>(() => fullMacro.Insert(0, "A"), "K8850 macro overflow rejected");
+K8850Reject<InvalidOperationException>(() => fullMacro.Replace(0, "Ctrl+Shift+A"), "K8850 macro replacement overflow");
+Check(fullMacro.Steps.Count == 9 && fullMacro.Binding == string.Join(",", Enumerable.Repeat("Ctrl+A", 9)),
+    "Rejected macro edit preserves previous sequence");
+K8850Reject<FormatException>(() => K8850MacroSequence.Parse("Volume Up"), "K8850 macro rejects media");
+K8850Reject<FormatException>(() => K8850MacroSequence.Parse("Left Click"), "K8850 macro rejects mouse");
+K8850Reject<FormatException>(() => K8850MacroSequence.Parse("hex: 68"), "K8850 macro preserves raw assignments outside named editor");
+K8850Reject<FormatException>(() => visualMacro.Insert(0, "A,B"), "K8850 macro rejects multiple steps in one field");
+Console.WriteLine("K8850 visual macro sequence tests passed.");

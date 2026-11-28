@@ -130,7 +130,12 @@ internal sealed class K8850Dialog : Form
         profiles.MaximumSize = new Size(850, 0);
         root.Controls.Add(profiles);
         root.Controls.Add(_devices);
-        root.Controls.Add(_refresh);
+        var devicesRow = new FlowLayoutPanel { AutoSize = true };
+        devicesRow.Controls.Add(_refresh);
+        var diagnostics = new Button { Text = "Readback diagnostics...", AutoSize = true };
+        diagnostics.Click += (_, _) => K8850Diagnostics.Show(this, (_devices.SelectedItem as Choice)?.Device);
+        devicesRow.Controls.Add(diagnostics);
+        root.Controls.Add(devicesRow);
         var layout = new TableLayoutPanel { ColumnCount = 7, RowCount = 4, AutoSize = true };
         for (int i = 1; i <= 16; i++)
         {

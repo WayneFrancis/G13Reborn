@@ -1757,3 +1757,21 @@ K8850Reject<FormatException>(() => K8850MacroSequence.Parse("Left Click"), "K885
 K8850Reject<FormatException>(() => K8850MacroSequence.Parse("hex: 68"), "K8850 macro preserves raw assignments outside named editor");
 K8850Reject<FormatException>(() => visualMacro.Insert(0, "A,B"), "K8850 macro rejects multiple steps in one field");
 Console.WriteLine("K8850 visual macro sequence tests passed.");
+
+K8850Packet(K8850Binding.Encode(1,1,"Brightness Up"), (0,3),(1,0xfd),(2,1),(3,1),(4,2),(6,2),(9,0x6f));
+K8850Packet(K8850Binding.Encode(25,3,"Calculator"), (0,3),(1,0xfd),(2,25),(3,3),(4,2),(6,2),(9,0x92),(12,0x01));
+K8850Packet(K8850Binding.Encode(1,1,"Browser Back"), (0,3),(1,0xfd),(2,1),(3,1),(4,2),(6,2),(9,0x24),(12,0x02));
+K8850Packet(K8850Binding.Encode(1,1,"Mouse: Ctrl+Move -128 127"), (0,3),(1,0xfd),(2,1),(3,1),(4,3),(5,1),(6,4),(9,0xf1),(15,0x80),(18,0x7f));
+K8850Packet(K8850Binding.Encode(1,1,"Mouse: Alt+Wheel -3"), (0,3),(1,0xfd),(2,1),(3,1),(4,3),(5,1),(6,4),(9,0xf3),(21,0xfd));
+K8850Packet(K8850Binding.Encode(1,1,"Mouse: Shift+Left Click"), (0,3),(1,0xfd),(2,1),(3,1),(4,3),(5,1),(6,4),(9,0xf2),(12,1));
+foreach (string mouseBinding in new[] { "Left Click", "Right Click", "Middle Click", "Wheel Up", "Wheel Down",
+    "Mouse: Ctrl+Move -128 127", "Mouse: Alt+Wheel -3", "Mouse: Shift+Left Click" })
+{
+    Check(K8850MouseAction.TryParse(mouseBinding, out var parsedMouse), "Mouse action parsed");
+    Check(K8850Binding.Encode(2,3,parsedMouse.Binding).SequenceEqual(K8850Binding.Encode(2,3,mouseBinding)), "Mouse action round trip");
+}
+K8850Reject<FormatException>(() => K8850Binding.Encode(1,1,"Mouse: Move 128 0"), "Mouse overflow rejected");
+K8850Reject<FormatException>(() => K8850Binding.Encode(1,1,"Mouse: Ctrl+Alt+Left Click"), "Multiple mouse modifiers rejected");
+K8850Reject<ArgumentException>(() => K8850Binding.Encode(1,1,"Mouse: Move 0 0"), "Zero movement rejected");
+K8850Reject<ArgumentException>(() => K8850Binding.Encode(1,1,"Mouse: Wheel 0"), "Zero scroll rejected");
+Console.WriteLine("K8850 expanded multimedia and mouse action tests passed.");

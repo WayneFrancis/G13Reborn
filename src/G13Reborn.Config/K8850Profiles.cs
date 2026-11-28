@@ -38,27 +38,26 @@ internal sealed class K8850Profiles
 
 internal static class K8850Binding
 {
+    internal static IReadOnlyDictionary<string, ushort> MediaUsages { get; } =
+        new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Volume Up"] = 0xe9, ["Volume Down"] = 0xea, ["Mute"] = 0xe2,
+            ["Play/Pause"] = 0xcd, ["Next Track"] = 0xb5, ["Previous Track"] = 0xb6,
+            ["Stop Media"] = 0xb7, ["Brightness Up"] = 0x6f, ["Brightness Down"] = 0x70,
+            ["Favorites"] = 0x182, ["Calculator"] = 0x192, ["Screen Lock"] = 0x19e,
+            ["Browser Home"] = 0x223, ["Browser Back"] = 0x224, ["Browser Forward"] = 0x225
+        };
+
     public static byte[] Encode(int slot, int layer, string value)
     {
         var s = value.Trim();
         if (s.StartsWith("hex:", StringComparison.OrdinalIgnoreCase))
             return K8850Protocol.Keyboard(slot, layer, s[4..].Split(' ', StringSplitOptions.RemoveEmptyEntries)
                 .Select(x => Convert.ToByte(x, 16)).ToArray());
-        var media = s.ToUpperInvariant() switch
-        {
-            "VOLUME UP" => 0xe9, "VOLUME DOWN" => 0xea, "MUTE" => 0xe2,
-            "PLAY/PAUSE" => 0xcd, "NEXT TRACK" => 0xb5, "PREVIOUS TRACK" => 0xb6,
-            "STOP MEDIA" => 0xb7, _ => 0
-        };
-        if (media != 0) return K8850Protocol.Media(slot, layer, (ushort)media);
-        switch (s.ToUpperInvariant())
-        {
-            case "LEFT CLICK": return K8850Protocol.Mouse(slot, layer, buttons: 1);
-            case "RIGHT CLICK": return K8850Protocol.Mouse(slot, layer, buttons: 2);
-            case "MIDDLE CLICK": return K8850Protocol.Mouse(slot, layer, buttons: 4);
-            case "WHEEL UP": return K8850Protocol.Mouse(slot, layer, wheel: 1);
-            case "WHEEL DOWN": return K8850Protocol.Mouse(slot, layer, wheel: -1);
-        }
+        if (MediaUsages.TryGetValue(s, out ushort usage))
+            return K8850Protocol.Media(slot, layer, usage);
+        if (K8850MouseAction.TryParse(s, out var mouse))
+            return mouse.Encode(slot, layer);
         var tokens = new List<byte>();
         foreach (var chord in s.Split(','))
         {

@@ -102,6 +102,7 @@ internal sealed class K8850Dialog : Form
         });
         Add("Save", Save);
         Add("Copy layer...", CopyLayer);
+        Add("Print layout...", () => K8850PrintLayout.Show(this, _profile, (int)_layer.Value, _minecraftBindings, _minecraftStale));
         Add("Validate profile...", ValidateProfile);
         Add("Export profile...", ExportProfile);
         Add("Import profile...", ImportProfile);

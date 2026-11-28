@@ -1690,3 +1690,49 @@ try
 }
 finally { Directory.Delete(minecraftVanillaFolder, true); }
 Console.WriteLine("Minecraft vanilla client translation tests passed.");
+
+var historyProfile = new K8850Profile();
+var editHistory = new K8850EditHistory();
+editHistory.Edit(historyProfile, "Type label", () => historyProfile.Labels["1:1"] = "J", "label:1:1");
+editHistory.Edit(historyProfile, "Type label", () => historyProfile.Labels["1:1"] = "Jetpack", "label:1:1");
+Check(editHistory.Undo(historyProfile) == "Type label" && historyProfile.Labels.Count == 0 &&
+    editHistory.UndoDescription == null, "K8850 history coalesces label typing");
+Check(editHistory.Redo(historyProfile) == "Type label" && historyProfile.Labels["1:1"] == "Jetpack",
+    "K8850 history redo restores label");
+editHistory.Edit(historyProfile, "Bulk edit", () => {
+    historyProfile.Bindings["1:1"] = "F13";
+    historyProfile.Bindings["2:1"] = "F14";
+    historyProfile.LayerNames[2] = "Machines";
+});
+Check(editHistory.Undo(historyProfile) == "Bulk edit" && historyProfile.Bindings.Count == 0 &&
+    historyProfile.LayerNames.Count == 0 && historyProfile.Labels["1:1"] == "Jetpack", "K8850 atomic bulk undo");
+Check(editHistory.Redo(historyProfile) == "Bulk edit" && historyProfile.Bindings.Count == 2 &&
+    historyProfile.LayerNames[2] == "Machines", "K8850 atomic bulk redo");
+editHistory.Undo(historyProfile);
+editHistory.Edit(historyProfile, "New edit", () => historyProfile.Bindings["1:1"] = "F24");
+Check(editHistory.RedoDescription == null, "K8850 new edit discards redo branch");
+editHistory.Edit(historyProfile, "No change", () => historyProfile.Bindings["1:1"] = "F24");
+Check(editHistory.UndoDescription == "New edit", "K8850 no-op edit ignored");
+var independentProfile = new K8850Profile();
+var independentHistory = new K8850EditHistory();
+Check(independentHistory.Undo(independentProfile) == null && independentProfile.Bindings.Count == 0,
+    "K8850 independent profile history");
+try
+{
+    editHistory.Edit(historyProfile, "Failed edit", () => {
+        historyProfile.Bindings["1:1"] = "A";
+        throw new InvalidOperationException("test rollback");
+    });
+    Check(false, "K8850 failed edit throws");
+}
+catch (InvalidOperationException ex) when (ex.Message == "test rollback") { }
+Check(historyProfile.Bindings["1:1"] == "F24" && editHistory.UndoDescription == "New edit",
+    "K8850 failed edit restores snapshot");
+var boundedHistory = new K8850EditHistory();
+var boundedProfile = new K8850Profile();
+for (int editIndex = 1; editIndex <= 110; editIndex++)
+    boundedHistory.Edit(boundedProfile, "Edit", () => boundedProfile.Labels["1:1"] = editIndex.ToString());
+int undoCount = 0;
+while (boundedHistory.Undo(boundedProfile) != null) undoCount++;
+Check(undoCount == 100 && boundedProfile.Labels["1:1"] == "10", "K8850 history bounded to 100 edits");
+Console.WriteLine("K8850 local edit history tests passed.");

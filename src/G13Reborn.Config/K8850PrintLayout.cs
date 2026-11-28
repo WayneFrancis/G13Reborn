@@ -68,12 +68,13 @@ internal static class K8850PrintLayout
             try
             {
                 using var doc = new PrintDocument { DocumentName = "K8850 - " + profile.Name, OriginAtMargins = true };
-                if (!doc.PrinterSettings.IsValid)
-                    throw new InvalidOperationException("No usable printer selected. Install or select a Windows printer, such as Microsoft Print to PDF.");
-                doc.DefaultPageSettings.Margins = new Margins(50, 50, 50, 50);
+
                 using var printer = new PrintDialog { Document = doc, UseEXDialog = true, AllowSomePages = false,
                     AllowSelection = false, AllowCurrentPage = false };
                 if (printer.ShowDialog(settings) != DialogResult.OK) return;
+                if (!doc.PrinterSettings.IsValid)
+                    throw new InvalidOperationException("No usable printer selected. Install or select a Windows printer, such as Microsoft Print to PDF.");
+                doc.DefaultPageSettings.Margins = new Margins(50, 50, 50, 50);
                 var selected = scope.SelectedIndex == 0 ? layers : new[] { layers[currentLayer - 1] };
                 bool compact = format.SelectedIndex == 1;
                 float cellWidth = (float)width.Value * 100f / 25.4f;
@@ -115,7 +116,7 @@ internal static class K8850PrintLayout
         if (compact)
         {
             const float gap = 8f; // Approximately 2 mm.
-            if (4 * cellWidth + 3 * gap > area.Width || 4 * cellHeight + 3 * gap + 100 > area.Height)
+            if (4 * cellWidth + 3 * gap > area.Width || 4 * cellHeight + 3 * gap + 120 > area.Height)
                 throw new InvalidOperationException("The selected label dimensions do not fit this printable page. Choose smaller labels or a larger paper size.");
             for (int i = 0; i < 16; i++)
                 DrawCell(g, new RectangleF((i % 4) * (cellWidth + gap), 72 + (i / 4) * (cellHeight + gap),

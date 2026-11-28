@@ -11,6 +11,7 @@
     <ProjectReference Include="../../src/G13Reborn.VirtualController/G13Reborn.VirtualController.csproj" />
     <ProjectReference Include="../../src/G13Reborn.Mapping/G13Reborn.Mapping.csproj" />
     <Compile Include="../../src/G13Reborn.Config/K8850Profiles.cs" Link="K8850Profiles.cs" />
+    <Compile Include="../../src/G13Reborn.Config/K8850EditHistory.cs" Link="K8850EditHistory.cs" />
     <Compile Include="../../src/G13Reborn.Config/MinecraftBindings.cs" Link="MinecraftBindings.cs" />
   </ItemGroup>
 </Project>

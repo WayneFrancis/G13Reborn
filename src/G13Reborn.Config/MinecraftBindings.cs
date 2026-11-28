@@ -7,8 +7,9 @@ internal sealed class MinecraftBindings
 {
     private readonly Dictionary<string, List<string>> _actions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _translations = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _knownActions = new(StringComparer.Ordinal);
     public int Count { get; private set; }
-    public int TranslationCount => _translations.Count;
+    public int TranslationCount => _actions.Values.SelectMany(x => x).Distinct(StringComparer.Ordinal).Count(_translations.ContainsKey);
     public int UnreadableArchives { get; private set; }
 
     public sealed record ActionEntry(string Id, string Description, string Input, string Signature, int SharedCount);
@@ -19,6 +20,19 @@ internal sealed class MinecraftBindings
         var mods = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, "mods");
         if (Directory.Exists(mods))
             result.LoadTranslations(Directory.EnumerateFiles(mods, "*.jar").OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
+        return result;
+    }
+
+    public MinecraftBindings ReloadOptions(string path)
+    {
+        var result = Parse(File.ReadAllLines(path));
+        // Existing IDs (including unbound actions) already had a translation lookup.
+        // Rescan only if the options contain newly encountered action IDs.
+        if (!result._knownActions.IsSubsetOf(_knownActions))
+            return Load(path);
+        foreach (var pair in _translations) result._translations.Add(pair.Key, pair.Value);
+        result.UnreadableArchives = UnreadableArchives;
+        result._knownActions.UnionWith(_knownActions);
         return result;
     }
 
@@ -35,7 +49,7 @@ internal sealed class MinecraftBindings
 
     public void LoadTranslations(IEnumerable<string> archives)
     {
-        var wanted = _actions.Values.SelectMany(x => x).ToHashSet(StringComparer.Ordinal);
+        var wanted = _knownActions;
         foreach (var path in archives)
         {
             try
@@ -74,6 +88,7 @@ internal sealed class MinecraftBindings
             int separator = line.IndexOf(':');
             if (separator <= 4) continue;
             string action = line[4..separator];
+            result._knownActions.Add(action);
             string[] parts = line[(separator + 1)..].Trim().Split(':');
             if (parts.Length > 2) continue;
             string input = parts[0].Trim().ToLowerInvariant();

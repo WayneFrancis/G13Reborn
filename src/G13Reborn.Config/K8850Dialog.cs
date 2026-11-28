@@ -12,6 +12,17 @@ internal sealed class K8850Dialog : Form
     private readonly TextBox _actionLabel = new() { Width = 240, PlaceholderText = "Optional action label", MaxLength = 100 };
     private readonly ToolTip _tooltips = new() { AutoPopDelay = 30000 };
     private MinecraftBindings? _minecraftBindings;
+    private readonly System.Windows.Forms.Timer _minecraftTimer = new() { Interval = 1500 };
+    private readonly CheckBox _autoMinecraft = new() { Text = "Auto-refresh Minecraft", AutoSize = true };
+    private readonly Label _minecraftStatus = new() { AutoSize = true, MaximumSize = new Size(850, 0) };
+    private readonly record struct OptionsStamp(long Length, DateTime LastWriteUtc);
+    private OptionsStamp? _loadedOptionsStamp, _pendingOptionsStamp;
+    private bool _minecraftStale;
+    private static OptionsStamp GetOptionsStamp(string path)
+    {
+        var info = new FileInfo(path);
+        return new OptionsStamp(info.Length, info.LastWriteTimeUtc);
+    }
     private (K8850Profile Profile, string Key, string Binding, string Label)? _copied;
     private readonly Button _copy = new() { Text = "Copy assignment", AutoSize = true };
     private readonly Button _paste = new() { Text = "Paste assignment", AutoSize = true };
@@ -157,10 +168,22 @@ internal sealed class K8850Dialog : Form
         AddMinecraft("Find unused gaming keys...", FindUnusedGamingKeys);
         AddMinecraft("Suggest action labels...", SuggestMinecraftLabels);
         AddMinecraft("Clear Minecraft link", () => {
-            _store.MinecraftOptionsPath = null; _minecraftBindings = null; Save(); RefreshLabels();
+            _store.MinecraftOptionsPath = null; _minecraftBindings = null; _loadedOptionsStamp = _pendingOptionsStamp = null;
+            _minecraftStale = false; _minecraftStatus.Text = "Minecraft not linked."; Save(); RefreshLabels();
             _status.Text = "Minecraft keybinding link cleared.";
         });
+        _autoMinecraft.Checked = _store.AutoRefreshMinecraft;
+        _autoMinecraft.CheckedChanged += (_, _) => {
+            _store.AutoRefreshMinecraft = _autoMinecraft.Checked;
+            _pendingOptionsStamp = null;
+            _minecraftTimer.Enabled = _autoMinecraft.Checked;
+        };
+        minecraft.Controls.Add(_autoMinecraft);
         root.Controls.Add(minecraft);
+        root.Controls.Add(_minecraftStatus);
+        _minecraftStatus.Text = "Minecraft not linked.";
+        _minecraftTimer.Tick += (_, _) => PollMinecraftOptions();
+        _minecraftTimer.Enabled = _autoMinecraft.Checked;
         _layerName.TextChanged += (_, _) => {
             if (_loading) return;
             int layer = (int)_layer.Value;
@@ -176,7 +199,7 @@ internal sealed class K8850Dialog : Form
         _copy.Click += (_, _) => CopyAssignment();
         _paste.Click += (_, _) => PasteAssignment(false);
         _swap.Click += (_, _) => PasteAssignment(true);
-        Disposed += (_, _) => _tooltips.Dispose();
+        Disposed += (_, _) => { _minecraftTimer.Stop(); _minecraftTimer.Dispose(); _tooltips.Dispose(); };
         _category.SelectionChangeCommitted += (_, _) => {
             _loading = true;
             ConfigureEditor(_category.Text, "");
@@ -238,7 +261,7 @@ internal sealed class K8850Dialog : Form
         if (!string.IsNullOrWhiteSpace(_store.MinecraftOptionsPath))
         {
             try { RefreshMinecraftBindings(); }
-            catch (Exception ex) { _status.Text = "Minecraft options unavailable: " + ex.Message; }
+            catch (Exception ex) { MarkMinecraftStale(ex.Message); }
         }
     }
 
@@ -249,12 +272,14 @@ internal sealed class K8850Dialog : Form
         if (!string.IsNullOrWhiteSpace(_store.MinecraftOptionsPath))
             dialog.InitialDirectory = Path.GetDirectoryName(_store.MinecraftOptionsPath);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        var bindings = MinecraftBindings.Load(dialog.FileName);
-        _store.MinecraftOptionsPath = dialog.FileName;
-        _minecraftBindings = bindings;
+        string path = dialog.FileName;
+        var stamp = GetOptionsStamp(path);
+        var bindings = MinecraftBindings.Load(path);
+        if (GetOptionsStamp(path) != stamp)
+            throw new IOException("Minecraft saved options during reading. Please try again.");
+        _store.MinecraftOptionsPath = path;
+        AcceptMinecraftSnapshot(bindings, stamp);
         Save();
-        RefreshLabels();
-        _status.Text = $"Loaded {bindings.Count} saved Minecraft bindings; {bindings.TranslationCount} translated IDs; {bindings.UnreadableArchives} unreadable mod archives.";
     }
 
     private void RefreshMinecraftBindings()
@@ -264,18 +289,82 @@ internal sealed class K8850Dialog : Form
             SelectMinecraftOptions();
             return;
         }
-        _minecraftBindings = null;
+        try
+        {
+            string path = _store.MinecraftOptionsPath!;
+            var stamp = GetOptionsStamp(path);
+            var bindings = MinecraftBindings.Load(path); // Explicit refresh also rescans mod translations.
+            if (GetOptionsStamp(path) != stamp) throw new IOException("Minecraft saved options during reading.");
+            AcceptMinecraftSnapshot(bindings, stamp);
+        }
+        catch (Exception ex)
+        {
+            MarkMinecraftStale(ex.Message);
+            throw;
+        }
+    }
+
+    private void AcceptMinecraftSnapshot(MinecraftBindings bindings, OptionsStamp stamp)
+    {
+        _minecraftBindings = bindings;
+        _loadedOptionsStamp = stamp;
+        _pendingOptionsStamp = null;
+        _minecraftStale = false;
+        _minecraftStatus.Text = $"Minecraft refreshed {DateTime.Now:HH:mm:ss}: {bindings.Count} saved bindings; " +
+            $"{bindings.TranslationCount} translated IDs; {bindings.UnreadableArchives} unreadable mod archives.";
         RefreshLabels();
-        _minecraftBindings = MinecraftBindings.Load(_store.MinecraftOptionsPath);
-        RefreshLabels();
-        _status.Text = $"Loaded {_minecraftBindings.Count} saved Minecraft bindings; {_minecraftBindings.TranslationCount} translated IDs; {_minecraftBindings.UnreadableArchives} unreadable mod archives.";
+    }
+
+    private void MarkMinecraftStale(string reason)
+    {
+        _minecraftStatus.Text = "Minecraft options unavailable or changing: " + reason +
+            (_minecraftBindings != null ? " (showing last successful snapshot)" : "");
+        if (!_minecraftStale)
+        {
+            _minecraftStale = true;
+            RefreshLabels();
+        }
+    }
+
+    private void PollMinecraftOptions()
+    {
+        if (_busy || IsDisposed || !_autoMinecraft.Checked || string.IsNullOrWhiteSpace(_store.MinecraftOptionsPath)) return;
+        try
+        {
+            string path = _store.MinecraftOptionsPath!;
+            var stamp = GetOptionsStamp(path);
+            if (!_minecraftStale && _loadedOptionsStamp == stamp)
+            {
+                _pendingOptionsStamp = null;
+                return;
+            }
+            if (_pendingOptionsStamp != stamp)
+            {
+                _pendingOptionsStamp = stamp;
+                MarkMinecraftStale("waiting for the saved file to settle");
+                return;
+            }
+            var snapshot = _minecraftBindings?.ReloadOptions(path) ?? MinecraftBindings.Load(path);
+            if (GetOptionsStamp(path) != stamp)
+            {
+                _pendingOptionsStamp = null;
+                MarkMinecraftStale("file changed while reading");
+                return;
+            }
+            AcceptMinecraftSnapshot(snapshot, stamp);
+        }
+        catch (Exception ex)
+        {
+            _pendingOptionsStamp = null;
+            MarkMinecraftStale(ex.Message);
+        }
     }
 
     private void FindUnusedGamingKeys()
     {
-        if (_minecraftBindings is not { } bindings)
+        if (_minecraftBindings is not { } bindings || _minecraftStale)
         {
-            MessageBox.Show(this, "Link the Minecraft instance options.txt first.");
+            MessageBox.Show(this, "Link or refresh Minecraft options.txt and wait for a successful read first.");
             return;
         }
         using var dialog = new Form { Text = "Find unused gaming keys", Size = new Size(1100, 650),
@@ -362,9 +451,9 @@ internal sealed class K8850Dialog : Form
 
     private void BrowseMinecraftActions()
     {
-        if (_minecraftBindings is not { } bindings)
+        if (_minecraftBindings is not { } bindings || _minecraftStale)
         {
-            MessageBox.Show(this, "Link the Minecraft instance options.txt first.");
+            MessageBox.Show(this, "Link or refresh Minecraft options.txt and wait for a successful read first.");
             return;
         }
         using var dialog = new Form { Text = "Minecraft saved actions", Size = new Size(1000, 620),
@@ -407,9 +496,9 @@ internal sealed class K8850Dialog : Form
 
     private void SuggestMinecraftLabels()
     {
-        if (_minecraftBindings is not { } bindings)
+        if (_minecraftBindings is not { } bindings || _minecraftStale)
         {
-            MessageBox.Show(this, "Link the Minecraft instance options.txt first.");
+            MessageBox.Show(this, "Link or refresh Minecraft options.txt and wait for a successful read first.");
             return;
         }
         var suggestions = new List<(string Key, string Label, string Binding)>();
@@ -849,6 +938,7 @@ internal sealed class K8850Dialog : Form
             button.Text = label + "\n" + (string.IsNullOrWhiteSpace(custom) ? assignment : custom + "\n" + assignment);
             var matches = value != null ? _minecraftBindings?.Match(value) : null;
             string tooltip = button.Text;
+            if (_minecraftStale && _minecraftBindings != null) tooltip += "\n\nMinecraft data: last successful snapshot (stale).";
             if (matches is { Count: > 0 })
                 tooltip += "\n\nMinecraft saved bindings:\n" + string.Join("\n", matches.Select(id => _minecraftBindings!.Describe(id)));
             if (value != null && _minecraftBindings?.Inspect(value) is { } usage)

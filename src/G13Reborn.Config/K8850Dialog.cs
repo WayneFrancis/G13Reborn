@@ -11,6 +11,7 @@ internal sealed class K8850Dialog : Form
     private readonly TextBox _layerName = new() { Width = 190, PlaceholderText = "Optional layer name", MaxLength = 60 };
     private readonly TextBox _actionLabel = new() { Width = 240, PlaceholderText = "Optional action label", MaxLength = 100 };
     private readonly ToolTip _tooltips = new() { AutoPopDelay = 30000 };
+    private sealed record DragAssignment(K8850Profile Profile, int Layer, int Slot);
     private MinecraftBindings? _minecraftBindings;
     private readonly System.Windows.Forms.Timer _minecraftTimer = new() { Interval = 1500 };
     private readonly CheckBox _autoMinecraft = new() { Text = "Auto-refresh Minecraft", AutoSize = true };
@@ -117,7 +118,7 @@ internal sealed class K8850Dialog : Form
             int slot = i;
             var button = new Button { Text = $"K{i}", Width = 100, Height = 83 };
             _buttons[slot] = button;
-            button.Click += (_, _) => _slot.Value = slot;
+            ConfigureSlotButton(button, slot);
             layout.Controls.Add(button, (i-1)%4, (i-1)/4);
         }
         for (int n = 0; n < 3; n++)
@@ -126,10 +127,11 @@ internal sealed class K8850Dialog : Form
             int slot = 17 + n*3 + a;
             var button = new Button { Text = $"R{n+1} {new[] { "CCW", "Press", "CW" }[a]}", Width = 100, Height = 83 };
             _buttons[slot] = button;
-            button.Click += (_, _) => _slot.Value = slot;
+            ConfigureSlotButton(button, slot);
             layout.Controls.Add(button, 4+a, n);
         }
         root.Controls.Add(layout);
+        root.Controls.Add(new Label { Text = "Drag configured slots to swap; Ctrl+drag copies. Dropping onto unknown slots copies by default.", AutoSize = true });
         var selection = new FlowLayoutPanel { AutoSize = true };
         selection.Controls.AddRange(new Control[] { new Label { Text = "Slot", AutoSize = true }, _slot,
             new Label { Text = "Edit layer", AutoSize = true }, _layer });
@@ -165,11 +167,15 @@ internal sealed class K8850Dialog : Form
         }
         AddMinecraft("Minecraft options...", SelectMinecraftOptions);
         AddMinecraft("Refresh Minecraft bindings", RefreshMinecraftBindings);
+        AddMinecraft("Minecraft client JAR...", SelectMinecraftClient);
+        AddMinecraft("Auto-detect client JAR", () => {
+            _store.MinecraftClientJarPath = null; Save(); RefreshMinecraftBindings();
+        });
         AddMinecraft("Browse Minecraft actions...", BrowseMinecraftActions);
         AddMinecraft("Find unused gaming keys...", FindUnusedGamingKeys);
         AddMinecraft("Suggest action labels...", SuggestMinecraftLabels);
         AddMinecraft("Clear Minecraft link", () => {
-            _store.MinecraftOptionsPath = null; _minecraftBindings = null; _loadedOptionsStamp = _pendingOptionsStamp = null;
+            _store.MinecraftOptionsPath = null; _store.MinecraftClientJarPath = null; _minecraftBindings = null; _loadedOptionsStamp = _pendingOptionsStamp = null;
             _minecraftStale = false; _minecraftStatus.Text = "Minecraft not linked."; Save(); RefreshLabels();
             _status.Text = "Minecraft keybinding link cleared.";
         });
@@ -275,10 +281,37 @@ internal sealed class K8850Dialog : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         string path = dialog.FileName;
         var stamp = GetOptionsStamp(path);
-        var bindings = MinecraftBindings.Load(path);
+        bool sameInstance = string.Equals(path, _store.MinecraftOptionsPath, StringComparison.OrdinalIgnoreCase);
+        var bindings = MinecraftBindings.Load(path, sameInstance ? _store.MinecraftClientJarPath : null);
         if (GetOptionsStamp(path) != stamp)
             throw new IOException("Minecraft saved options during reading. Please try again.");
+        if (!sameInstance) _store.MinecraftClientJarPath = null;
         _store.MinecraftOptionsPath = path;
+        AcceptMinecraftSnapshot(bindings, stamp);
+        Save();
+    }
+
+    private void SelectMinecraftClient()
+    {
+        if (string.IsNullOrWhiteSpace(_store.MinecraftOptionsPath))
+        {
+            MessageBox.Show(this, "Link the Minecraft instance options.txt first.");
+            return;
+        }
+        using var dialog = new OpenFileDialog { Filter = "Minecraft client JAR (*.jar)|*.jar",
+            CheckFileExists = true, Title = "Select the matching vanilla Minecraft client JAR" };
+        if (!string.IsNullOrWhiteSpace(_store.MinecraftClientJarPath))
+            dialog.InitialDirectory = Path.GetDirectoryName(_store.MinecraftClientJarPath);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        // Validate this archive contains the vanilla English resource before accepting it.
+        using (var archive = System.IO.Compression.ZipFile.OpenRead(dialog.FileName))
+            if (archive.GetEntry("assets/minecraft/lang/en_us.json") == null)
+                throw new InvalidDataException("This JAR does not contain the vanilla English language resource.");
+        string path = _store.MinecraftOptionsPath!;
+        var stamp = GetOptionsStamp(path);
+        var bindings = MinecraftBindings.Load(path, dialog.FileName);
+        if (GetOptionsStamp(path) != stamp) throw new IOException("Minecraft saved options during reading. Try again.");
+        _store.MinecraftClientJarPath = dialog.FileName;
         AcceptMinecraftSnapshot(bindings, stamp);
         Save();
     }
@@ -294,7 +327,7 @@ internal sealed class K8850Dialog : Form
         {
             string path = _store.MinecraftOptionsPath!;
             var stamp = GetOptionsStamp(path);
-            var bindings = MinecraftBindings.Load(path); // Explicit refresh also rescans mod translations.
+            var bindings = MinecraftBindings.Load(path, _store.MinecraftClientJarPath); // Explicit refresh also rescans mod translations.
             if (GetOptionsStamp(path) != stamp) throw new IOException("Minecraft saved options during reading.");
             AcceptMinecraftSnapshot(bindings, stamp);
         }
@@ -312,7 +345,8 @@ internal sealed class K8850Dialog : Form
         _pendingOptionsStamp = null;
         _minecraftStale = false;
         _minecraftStatus.Text = $"Minecraft refreshed {DateTime.Now:HH:mm:ss}: {bindings.Count} saved bindings; " +
-            $"{bindings.TranslationCount} translated IDs; {bindings.UnreadableArchives} unreadable mod archives.";
+            $"{bindings.TranslationCount} translated IDs; {bindings.UnreadableArchives} unreadable archives." +
+            (bindings.VanillaClientPath == null ? " Vanilla client not located." : $" Vanilla client: {Path.GetFileName(bindings.VanillaClientPath)}.");
         RefreshLabels();
     }
 
@@ -345,7 +379,7 @@ internal sealed class K8850Dialog : Form
                 MarkMinecraftStale("waiting for the saved file to settle");
                 return;
             }
-            var snapshot = _minecraftBindings?.ReloadOptions(path) ?? MinecraftBindings.Load(path);
+            var snapshot = _minecraftBindings?.ReloadOptions(path) ?? MinecraftBindings.Load(path, _store.MinecraftClientJarPath);
             if (GetOptionsStamp(path) != stamp)
             {
                 _pendingOptionsStamp = null;
@@ -880,6 +914,62 @@ internal sealed class K8850Dialog : Form
             _profile.Bindings[BindingKey] = captured;
             ShowBinding();
         }
+    }
+
+    private void ConfigureSlotButton(Button button, int slot)
+    {
+        Point? dragStart = null;
+        button.Click += (_, _) => _slot.Value = slot;
+        button.AllowDrop = true;
+        button.MouseDown += (_, e) => dragStart = e.Button == MouseButtons.Left ? e.Location : null;
+        button.MouseUp += (_, _) => dragStart = null;
+        button.MouseMove += (_, e) =>
+        {
+            if (_busy || dragStart is not Point start || e.Button != MouseButtons.Left) return;
+            var size = SystemInformation.DragSize;
+            var threshold = new Rectangle(start.X - size.Width / 2, start.Y - size.Height / 2, size.Width, size.Height);
+            if (threshold.Contains(e.Location)) return;
+            dragStart = null;
+            if (!_profile.Bindings.ContainsKey($"{_layer.Value}:{slot}")) return;
+            button.DoDragDrop(new DragAssignment(_profile, (int)_layer.Value, slot), DragDropEffects.Copy | DragDropEffects.Move);
+        };
+        void UpdateEffect(DragEventArgs e)
+        {
+            e.Effect = DragDropEffects.None;
+            if (_busy || e.Data?.GetData(typeof(DragAssignment)) is not DragAssignment drag ||
+                !ReferenceEquals(drag.Profile, _profile) || drag.Layer != (int)_layer.Value || drag.Slot == slot ||
+                !_profile.Bindings.ContainsKey($"{drag.Layer}:{drag.Slot}")) return;
+            bool copy = (e.KeyState & 8) != 0 || !_profile.Bindings.ContainsKey($"{drag.Layer}:{slot}");
+            e.Effect = copy ? DragDropEffects.Copy : DragDropEffects.Move;
+        }
+        button.DragEnter += (_, e) => UpdateEffect(e);
+        button.DragOver += (_, e) => UpdateEffect(e);
+        button.DragDrop += (_, e) =>
+        {
+            UpdateEffect(e);
+            if (e.Effect == DragDropEffects.None || e.Data?.GetData(typeof(DragAssignment)) is not DragAssignment drag) return;
+            string source = $"{drag.Layer}:{drag.Slot}", destination = $"{drag.Layer}:{slot}";
+            bool copy = e.Effect == DragDropEffects.Copy;
+            try
+            {
+                string binding = _profile.Bindings[source];
+                string? label = _profile.Labels.GetValueOrDefault(source);
+                string? previous = _profile.Bindings.GetValueOrDefault(destination);
+                string? previousLabel = _profile.Labels.GetValueOrDefault(destination);
+                K8850Binding.Encode(slot, drag.Layer, binding);
+                if (!copy && previous != null) K8850Binding.Encode(drag.Slot, drag.Layer, previous);
+                if (previous != null && MessageBox.Show(this,
+                    copy ? "Replace destination assignment and label?" : "Swap the two assignments and labels?",
+                    "Confirm local drag edit", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+                if (!copy) SetLocalAssignment(_profile, source, previous, previousLabel);
+                SetLocalAssignment(_profile, destination, binding, label);
+                _slot.Value = slot;
+                ShowBinding();
+                _status.Text = copy ? "Copied local assignment by dragging. Review before uploading." :
+                    "Swapped local assignments by dragging. Review before uploading.";
+            }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message); }
+        };
     }
 
     private void CopyAssignment()

@@ -177,6 +177,21 @@ internal static class NativeHid
         return handle;
     }
 
+    internal static SafeFileHandle OpenK8850Input(string path)
+    {
+        if (!path.Contains("vid_514c&pid_8850&mi_00", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Expected K8850 configuration interface.", nameof(path));
+        var handle = CreateFile(path, GenericRead, ShareReadWrite,
+            IntPtr.Zero, OpenExisting, FileFlagOverlapped, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new Win32Exception(error, "Cannot open K8850 vendor interface for passive reading.");
+        }
+        return handle;
+    }
+
     internal static SafeFileHandle OpenK8850Output(string path)
     {
         if (!path.Contains("vid_514c&pid_8850&mi_00", StringComparison.OrdinalIgnoreCase))

@@ -48,7 +48,7 @@ internal sealed class K8850Dialog : Form
     private readonly CheckBox[] _modifierChecks = new[] { "Ctrl", "Shift", "Alt", "Win", "RCtrl", "RShift", "RAlt", "RWin" }
         .Select(name => new CheckBox { Text = name, AutoSize = true }).ToArray();
     private readonly Button _capture = new() { Text = "Capture shortcut...", AutoSize = true };
-    private static readonly string[] Media = { "Volume Up", "Volume Down", "Mute", "Play/Pause", "Next Track", "Previous Track", "Stop Media" };
+    private static readonly string[] Media = K8850Binding.MediaUsages.Keys.ToArray();
     private static readonly string[] MouseActions = { "Left Click", "Right Click", "Middle Click", "Wheel Up", "Wheel Down" };
     private static readonly string[] Keyboard = Enumerable.Range(0, 26).Select(i => ((char)('A' + i)).ToString())
         .Concat(Enumerable.Range(0, 10).Select(i => i.ToString()))
@@ -168,6 +168,12 @@ internal sealed class K8850Dialog : Form
             catch (Exception ex) { MessageBox.Show(this, ex.Message); }
         };
         editor.Controls.Add(macro);
+        var mouse = new Button { Text = "Configure mouse action...", AutoSize = true };
+        mouse.Click += (_, _) => {
+            try { EditMouseAction(); }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message); }
+        };
+        editor.Controls.Add(mouse);
         var forget = new Button { Text = "Forget local assignment", AutoSize = true };
         forget.Click += (_, _) => { EditLocal("Forget assignment", () => SetLocalAssignment(_profile, BindingKey, null, null)); ShowBinding(); };
         editor.Controls.Add(forget);
@@ -859,7 +865,7 @@ internal sealed class K8850Dialog : Form
         var value = _profile.Bindings.GetValueOrDefault(BindingKey, "");
         var baseKey = SplitModifiers(value).Key;
         var category = Media.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Multimedia" :
-            MouseActions.Contains(value, StringComparer.OrdinalIgnoreCase) ? "Mouse" :
+            (MouseActions.Contains(value, StringComparer.OrdinalIgnoreCase) || value.StartsWith("Mouse:", StringComparison.OrdinalIgnoreCase)) ? "Mouse" :
             value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase) ? "Advanced / hex" :
             GamingKeys.Contains(baseKey, StringComparer.OrdinalIgnoreCase) ? GamingCategory :
             ExtendedKeyboard.Contains(baseKey, StringComparer.OrdinalIgnoreCase) ? "Extended keyboard" : "Keyboard";
@@ -918,11 +924,26 @@ internal sealed class K8850Dialog : Form
             GamingCategory => GamingLabels, "Multimedia" => Media, "Mouse" => MouseActions, "Keyboard" => Keyboard, "Extended keyboard" => ExtendedKeyboard, _ => Array.Empty<string>()
         });
         if (fixedList)
-            _tokens.SelectedIndex = Array.FindIndex(category == GamingCategory ? GamingKeys : category == "Multimedia" ? Media : MouseActions,
+        {
+            int index = Array.FindIndex(category == GamingCategory ? GamingKeys : category == "Multimedia" ? Media : MouseActions,
                 x => x.Equals(value, StringComparison.OrdinalIgnoreCase));
+            if (category == "Mouse" && index < 0 && value.StartsWith("Mouse:", StringComparison.OrdinalIgnoreCase))
+                index = _tokens.Items.Add(value);
+            _tokens.SelectedIndex = index;
+        }
         else _tokens.Text = category == "Advanced / hex" && value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase)
             ? value[4..].Trim() : value;
         _capture.Enabled = category is "Keyboard" or "Extended keyboard";
+    }
+
+    private void EditMouseAction()
+    {
+        string? binding = K8850MouseDialog.Edit(this, _profile.Bindings.GetValueOrDefault(BindingKey));
+        if (binding == null) return;
+        K8850Binding.Encode((int)_slot.Value, (int)_layer.Value, binding);
+        EditLocal("Configure mouse action", () => _profile.Bindings[BindingKey] = binding);
+        ShowBinding();
+        _status.Text = "Mouse action edited locally. Review before uploading.";
     }
 
     private void EditMacroSequence()

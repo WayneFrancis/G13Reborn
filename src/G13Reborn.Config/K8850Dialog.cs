@@ -159,9 +159,15 @@ internal sealed class K8850Dialog : Form
         selection.Controls.AddRange(new Control[] { _layerName, layerHelp });
         root.Controls.Add(selection);
         root.Controls.Add(new Label { Text = "Assignment (select an action or capture a keyboard shortcut)", AutoSize = true });
-        var editor = new FlowLayoutPanel { AutoSize = true };
+        var editor = new FlowLayoutPanel { AutoSize = true, MaximumSize = new Size(850, 0) };
         _category.Items.AddRange(new object[] { "Keyboard", GamingCategory, "Extended keyboard", "Multimedia", "Mouse", "Advanced / hex" });
         editor.Controls.AddRange(new Control[] { _category, _tokens, _capture });
+        var macro = new Button { Text = "Edit macro sequence...", AutoSize = true };
+        macro.Click += (_, _) => {
+            try { EditMacroSequence(); }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message); }
+        };
+        editor.Controls.Add(macro);
         var forget = new Button { Text = "Forget local assignment", AutoSize = true };
         forget.Click += (_, _) => { EditLocal("Forget assignment", () => SetLocalAssignment(_profile, BindingKey, null, null)); ShowBinding(); };
         editor.Controls.Add(forget);
@@ -917,6 +923,17 @@ internal sealed class K8850Dialog : Form
         else _tokens.Text = category == "Advanced / hex" && value.StartsWith("hex:", StringComparison.OrdinalIgnoreCase)
             ? value[4..].Trim() : value;
         _capture.Enabled = category is "Keyboard" or "Extended keyboard";
+    }
+
+    private void EditMacroSequence()
+    {
+        string? binding = K8850MacroDialog.Edit(this, _profile.Bindings.GetValueOrDefault(BindingKey),
+            Keyboard.Concat(ExtendedKeyboard));
+        if (binding == null) return;
+        K8850Binding.Encode((int)_slot.Value, (int)_layer.Value, binding);
+        EditLocal("Edit macro sequence", () => _profile.Bindings[BindingKey] = binding);
+        ShowBinding();
+        _status.Text = "Keyboard macro edited locally. Review before uploading.";
     }
 
     private void CaptureShortcut()

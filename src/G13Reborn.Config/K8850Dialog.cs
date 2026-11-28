@@ -154,6 +154,7 @@ internal sealed class K8850Dialog : Form
         AddMinecraft("Minecraft options...", SelectMinecraftOptions);
         AddMinecraft("Refresh Minecraft bindings", RefreshMinecraftBindings);
         AddMinecraft("Browse Minecraft actions...", BrowseMinecraftActions);
+        AddMinecraft("Find unused gaming keys...", FindUnusedGamingKeys);
         AddMinecraft("Suggest action labels...", SuggestMinecraftLabels);
         AddMinecraft("Clear Minecraft link", () => {
             _store.MinecraftOptionsPath = null; _minecraftBindings = null; Save(); RefreshLabels();
@@ -268,6 +269,95 @@ internal sealed class K8850Dialog : Form
         _minecraftBindings = MinecraftBindings.Load(_store.MinecraftOptionsPath);
         RefreshLabels();
         _status.Text = $"Loaded {_minecraftBindings.Count} saved Minecraft bindings; {_minecraftBindings.TranslationCount} translated IDs; {_minecraftBindings.UnreadableArchives} unreadable mod archives.";
+    }
+
+    private void FindUnusedGamingKeys()
+    {
+        if (_minecraftBindings is not { } bindings)
+        {
+            MessageBox.Show(this, "Link the Minecraft instance options.txt first.");
+            return;
+        }
+        using var dialog = new Form { Text = "Find unused gaming keys", Size = new Size(1100, 650),
+            StartPosition = FormStartPosition.CenterParent, MinimumSize = new Size(750, 420) };
+        var modifier = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 105 };
+        modifier.Items.AddRange(new object[] { "None", "Ctrl", "Shift", "Alt", "RCtrl", "RShift", "RAlt" });
+        modifier.SelectedIndex = 0;
+        var onlyFree = new CheckBox { Text = "Only unused candidates", Checked = true, AutoSize = true };
+        var includeOtherLayers = new CheckBox { Text = "Reserve keys on all layers", Checked = true, AutoSize = true };
+        var header = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 72, Padding = new Padding(5) };
+        header.Controls.AddRange(new Control[] { new Label { Text = "Modifier", AutoSize = true },
+            modifier, onlyFree, includeOtherLayers });
+        var summary = new Label { Dock = DockStyle.Top, Height = 62, Padding = new Padding(5) };
+        var grid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            RowHeadersVisible = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect };
+        foreach (var title in new[] { "Candidate", "Status", "Saved game actions", "Other modifiers / modifier key actions", "Other profile slots" })
+            grid.Columns.Add(title, title);
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48 };
+        var apply = new Button { Text = "Assign to selected macropad slot", AutoSize = true, Enabled = false };
+        var cancel = new Button { Text = "Close", AutoSize = true, DialogResult = DialogResult.Cancel };
+        footer.Controls.AddRange(new Control[] { apply, cancel });
+        string destination = BindingKey;
+        int destinationLayer = (int)_layer.Value;
+        string? selectedBinding = null;
+        void Refresh()
+        {
+            grid.Rows.Clear();
+            int available = 0;
+            var profileKeys = _profile.Bindings.Where(e => e.Key != destination &&
+                (includeOtherLayers.Checked || e.Key.StartsWith(destinationLayer + ":", StringComparison.Ordinal)))
+                .Select(e => (e.Key, Signature: MinecraftBindings.GetSignature(e.Value)))
+                .Where(e => e.Signature != null).ToArray();
+            string prefix = modifier.SelectedIndex == 0 ? "" : modifier.Text + "+";
+            foreach (string key in GamingKeys)
+            {
+                string candidate = prefix + key;
+                var usage = bindings.Inspect(candidate);
+                if (usage == null) continue;
+                var sameSlots = profileKeys.Where(e => string.Equals(e.Signature, usage.Signature, StringComparison.OrdinalIgnoreCase))
+                    .Select(e => e.Key).ToArray();
+                bool free = usage.ExactActions.Count == 0 && usage.OtherModifierActions.Count == 0 &&
+                    usage.ModifierKeyActions.Count == 0 && sameSlots.Length == 0;
+                if (free) available++;
+                if (onlyFree.Checked && !free) continue;
+                string state = free ? "Unused in saved data" :
+                    usage.ExactActions.Count > 0 || sameSlots.Length > 0 ? "Already assigned" : "Possible conflict";
+                string other = string.Join("; ", usage.OtherModifierActions.Select(bindings.Describe)
+                    .Concat(usage.ModifierKeyActions.Select(id => "Modifier key: " + bindings.Describe(id))));
+                int index = grid.Rows.Add(candidate, state, string.Join("; ", usage.ExactActions.Select(bindings.Describe)),
+                    other, string.Join(", ", sameSlots));
+                grid.Rows[index].Tag = candidate;
+            }
+            summary.Text = $"{available} of {GamingKeys.Length} candidates unused in saved data for this modifier. Destination: {destination}.\n" +
+                "Saved options and local profile only; game contexts, unsupported macros and unknown hardware may differ.";
+            apply.Enabled = grid.SelectedRows.Count == 1;
+        }
+        modifier.SelectedIndexChanged += (_, _) => Refresh();
+        onlyFree.CheckedChanged += (_, _) => Refresh();
+        includeOtherLayers.CheckedChanged += (_, _) => Refresh();
+        grid.SelectionChanged += (_, _) => apply.Enabled = grid.SelectedRows.Count == 1;
+        apply.Click += (_, _) =>
+        {
+            if (grid.SelectedRows.Count != 1 || grid.SelectedRows[0].Tag is not string candidate) return;
+            string state = Convert.ToString(grid.SelectedRows[0].Cells[1].Value) ?? "";
+            if ((_profile.Bindings.ContainsKey(destination) || state != "Unused in saved data") &&
+                MessageBox.Show(dialog, $"Assign {candidate} to {destination}? Existing assignment will be replaced if present. Review any conflicts first.",
+                    "Confirm local assignment", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            selectedBinding = candidate;
+            dialog.DialogResult = DialogResult.OK;
+        };
+        dialog.Controls.Add(grid);
+        dialog.Controls.Add(footer);
+        dialog.Controls.Add(summary);
+        dialog.Controls.Add(header);
+        dialog.CancelButton = cancel;
+        Refresh();
+        if (dialog.ShowDialog(this) != DialogResult.OK || selectedBinding == null) return;
+        K8850Binding.Encode((int)_slot.Value, destinationLayer, selectedBinding);
+        _profile.Bindings[destination] = selectedBinding;
+        ShowBinding();
+        _status.Text = $"Assigned {selectedBinding} locally to {destination}. Existing action label retained; configure Minecraft separately and upload when ready.";
     }
 
     private void BrowseMinecraftActions()
@@ -761,6 +851,13 @@ internal sealed class K8850Dialog : Form
             string tooltip = button.Text;
             if (matches is { Count: > 0 })
                 tooltip += "\n\nMinecraft saved bindings:\n" + string.Join("\n", matches.Select(id => _minecraftBindings!.Describe(id)));
+            if (value != null && _minecraftBindings?.Inspect(value) is { } usage)
+            {
+                if (usage.OtherModifierActions.Count > 0)
+                    tooltip += "\n\nSame key with other modifiers:\n" + string.Join("\n", usage.OtherModifierActions.Select(_minecraftBindings.Describe));
+                if (usage.ModifierKeyActions.Count > 0)
+                    tooltip += "\n\nModifier itself may trigger:\n" + string.Join("\n", usage.ModifierKeyActions.Select(_minecraftBindings.Describe));
+            }
             _tooltips.SetToolTip(button, tooltip);
         }
         _copy.Enabled = _profile.Bindings.ContainsKey(BindingKey);

@@ -1636,3 +1636,34 @@ Check(minecraftUsageSample.Inspect("F24")!.ExactActions.Count == 0 &&
 Check(minecraftUsageSample.Inspect("International 1")!.ExactActions.Count == 1, "Minecraft international reservation");
 Check(minecraftUsageSample.Inspect("A,B") == null, "Minecraft sequence availability unknown");
 Console.WriteLine("Minecraft gaming key availability and modifier warning tests passed.");
+
+var minecraftReloadFolder = Path.Combine(Path.GetTempPath(), "g13-reload-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(minecraftReloadFolder);
+try
+{
+    var reloadOptions = Path.Combine(minecraftReloadFolder, "options.txt");
+    var reloadMods = Directory.CreateDirectory(Path.Combine(minecraftReloadFolder, "mods")).FullName;
+    var reloadJar = Path.Combine(reloadMods, "example.jar");
+    using (var archive = System.IO.Compression.ZipFile.Open(reloadJar, System.IO.Compression.ZipArchiveMode.Create))
+    using (var writer = new StreamWriter(archive.CreateEntry("assets/example/lang/en_us.json").Open()))
+        writer.Write("{\"key.example.old\":\"Old action\",\"key.example.unbound\":\"Newly bound action\"}");
+    File.WriteAllLines(reloadOptions, new[] {
+        "key_key.example.old:key.keyboard.f13",
+        "key_key.example.unbound:key.keyboard.unknown"
+    });
+    var initialMinecraft = MinecraftBindings.Load(reloadOptions);
+    Check(initialMinecraft.Count == 1 && initialMinecraft.TranslationCount == 1, "Initial Minecraft bound count");
+    File.Delete(reloadJar); // Prove ordinary refresh does not need to reopen the archive.
+    File.WriteAllLines(reloadOptions, new[] {
+        "key_key.example.old:key.keyboard.f14",
+        "key_key.example.unbound:key.keyboard.f15"
+    });
+    var reloadedMinecraft = initialMinecraft.ReloadOptions(reloadOptions);
+    Check(reloadedMinecraft.Match("F13").Count == 0 &&
+        reloadedMinecraft.Match("F14").Single() == "key.example.old", "Minecraft reload reflects changed key");
+    Check(reloadedMinecraft.Describe("key.example.unbound") == "Newly bound action" &&
+        reloadedMinecraft.TranslationCount == 2, "Previously unbound action translation retained");
+    Check(initialMinecraft.Match("F13").Count == 1, "Minecraft reload leaves previous snapshot unchanged");
+}
+finally { Directory.Delete(minecraftReloadFolder, true); }
+Console.WriteLine("Minecraft options refresh and translation cache tests passed.");

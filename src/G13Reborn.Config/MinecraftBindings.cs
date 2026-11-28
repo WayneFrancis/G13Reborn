@@ -98,6 +98,37 @@ internal sealed class MinecraftBindings
             ? actions : Array.Empty<string>();
     }
 
+    public sealed record KeyUsage(string Binding, string Signature, IReadOnlyList<string> ExactActions,
+        IReadOnlyList<string> OtherModifierActions, IReadOnlyList<string> ModifierKeyActions);
+
+    public KeyUsage? Inspect(string binding)
+    {
+        string? signature = GetSignature(binding);
+        if (signature == null) return null;
+        int separator = signature.LastIndexOf(':');
+        string key = signature[..separator];
+        var exact = Match(binding);
+        var related = _actions.Where(pair => pair.Key.StartsWith(key + ":", StringComparison.OrdinalIgnoreCase) &&
+            !pair.Key.Equals(signature, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(pair => pair.Value).Distinct(StringComparer.Ordinal).ToArray();
+
+        // Physical modifier presses can also trigger standalone Minecraft actions.
+        // Keep sided HID tokens distinct even though NeoForge chord modifiers are not sided.
+        var modifierActions = new List<string>();
+        var report = K8850Binding.Encode(1, 1, binding);
+        if (report[4] == 1 && report[6] == 2)
+        {
+            string? modifierKey = report[9] switch {
+                0xf1 => "key.keyboard.left.control:", 0xf2 => "key.keyboard.left.shift:",
+                0xf3 => "key.keyboard.left.alt:", 0xf5 => "key.keyboard.right.control:",
+                0xf6 => "key.keyboard.right.shift:", 0xf7 => "key.keyboard.right.alt:", _ => null
+            };
+            if (modifierKey != null && _actions.TryGetValue(modifierKey, out var actions))
+                modifierActions.AddRange(actions);
+        }
+        return new KeyUsage(binding, signature, exact, related, modifierActions);
+    }
+
     private static string? Signature(byte[] report)
     {
         if (report[4] == 2 && report[12] == 0 && report[9] is 0xb5 or 0xb6)

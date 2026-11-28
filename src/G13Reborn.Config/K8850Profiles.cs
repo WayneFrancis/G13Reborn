@@ -16,6 +16,7 @@ internal sealed class K8850Profiles
     public List<K8850Profile> Profiles { get; set; } = new() { new() };
     public string Active { get; set; } = "Default";
     public string? MinecraftOptionsPath { get; set; }
+    public string? MinecraftClientJarPath { get; set; }
     public bool AutoRefreshMinecraft { get; set; } = true;
     public Dictionary<string, string> LastSent { get; set; } = new();
     private static string FilePath => Path.Combine(Environment.GetFolderPath(

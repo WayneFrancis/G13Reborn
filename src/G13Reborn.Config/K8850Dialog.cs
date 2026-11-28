@@ -892,7 +892,7 @@ internal sealed class K8850Dialog : Form
             return;
         }
         EditLocal("Edit keyboard assignment", () => _profile.Bindings[BindingKey] = string.Join("+", modifiers.Append(key)),
-            _tokens.Focused && _tokens.DropDownStyle != ComboBoxStyle.DropDownList ? $"binding:{BindingKey}" : null);
+            _tokens.ContainsFocus && _tokens.DropDownStyle != ComboBoxStyle.DropDownList ? $"binding:{BindingKey}" : null);
         RefreshLabels();
     }
 
